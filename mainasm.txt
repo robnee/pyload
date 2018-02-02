@@ -1,0 +1,883 @@
+;----------------------------------------------------------------------
+;
+; File: %M%
+;	Microchip ICSP host controller
+;
+;	Supports bootloader interface with DTR/MCLR control
+;
+;	Pin		Func	Desc
+;	4		MCLR	DTR (4)
+;	5		VSS		GND (5)
+;	6		RxD		TxD (3)
+;	7		TxD		RxD (2)
+;	14		VDD		+5V
+;
+;	
+;	13		RB7		ICSP SVP2
+;	12		RB6		ICSP SVP1
+;	11		RB5		ICSP VON
+;	1		RA2		ICSP VCCP (input?)
+;   18		RA1		ICSP CLK
+;	17		RA0		ICSP DATA
+;
+; Author:
+;	Robert F. Nee
+;	robnee@robnee.com
+;
+; Revisions:
+;   last delta : %U% $LastChangedDate: 2018-01-29 22:11:40 -0500 (Mon, 29 Jan 2018) $ %I%
+;
+; v1.0 04/22/2013
+;
+; V1.4 12/15/2015
+;	Added 50Hz timer for heartbeat timing.  Use ser_avail to check for
+;	input data instead of ser_wait so that heartbeat can keep running.
+;	On to testing...
+;
+;	Added ISV for serialx.asm because blocking version was not allowing
+;	enough time to process commands.
+;
+;	dramatically tighten icsp_read_byte clock timing to make it faster
+;
+;	sort out some problems with variables being shared where they shouldn't
+;
+; V1.5 12/21/2015
+;
+;	Remove some unnecessary pause calls to speed things up
+;	Add missing return to icsp_reset_address
+;	Raise mclr of target on startup so the target will run
+;
+; V1.6 1/9/2016
+;
+;	Add icsp_mclr_high and icsp_mclr_low to make the procedure of raising
+;	and lowering/releasing the mclr of the target more consistent
+;	Change to 19200 Baud
+;	Tighten up clock pulse timing to make programming faster
+;	Add M command (load program and inc) so that more efficient multi-word
+;	programming algorithm can work more efficiently
+;	Switch to hardware serial port routines
+;	Switch from pause to delay routines
+; 	Report as V1.3 of firmware
+;	Simplify juggling of programming methods.  Not state is remembered.
+;	Host is responsible for specifying the programming mode with all
+;	commands where is matters
+;
+; 1/22/2018
+;
+;	Convert to relocatable code
+;	Bump version ident string to '1.4'
+;
+;----------------------------------------------------------------------
+; Processor-dependant includes and defines
+
+		errorlevel -302 -1302
+
+		radix	dec
+
+		; Select the target processor
+		#include "p16f1826.inc"
+
+		; CPU configuration
+		; __config _CONFIG1,  _FOSC_INTOSC & _WDTE_OFF & _BOREN_OFF & _PWRTE_ON & _MCLRE_ON
+		__config _CONFIG1,  _FOSC_HS & _WDTE_OFF & _BOREN_OFF & _PWRTE_ON & _MCLRE_ON
+		__config _CONFIG2,  _LVP_ON & _STVREN_OFF & _PLLEN_OFF
+
+;----------------------------------------------------------------------
+; Constants
+
+FOSC			equ		6000000
+BAUD_RATE		equ		38400
+
+ICSP_MID		equ		0x0
+ICSP_ENH		equ		0x1
+
+; Choose proper values for OSCCON based on internal oscilator and desired FOSC
+	if FOSC == 4000000
+OSCCON_VAL		equ		b'01101010'
+	endif
+	if FOSC == 8000000
+OSCCON_VAL		equ		b'01110010'
+	endif
+	if FOSC == 16000000
+OSCCON_VAL		equ		b'01111010'
+	endif
+
+;----------------------------------------------------------------------
+
+#include "macros.inc"
+#include "bootloadx.inc"
+#include "delay.inc"
+#include "serutil.inc"
+
+;----------------------------------------------------------------------
+; Pin Definitions
+
+#define serin_pin   PORTB, 1
+#define serout_pin  PORTB, 2
+
+#define icsp_vpin	PORTB, 5
+#define icsp_svp1	PORTB, 6
+#define icsp_svp2	PORTB, 7
+
+#define icsp_cpin	PORTA, 1
+#define icsp_dpin	PORTA, 0
+
+; pin numbers    76543210
+trisa_mask equ b'11111111'
+trisb_mask equ b'11111011'
+
+;----------------------------------------------------------------------
+; Variables
+
+		; general variables
+			udata
+
+k				res		1
+icsp_temp		res		1
+icsp_data		res		2
+icsp_timer		res		1
+icsp_bit_count	res		1
+icsp_inc_count	res		1
+icsp_count		res		1
+
+;----------------------------------------------------------------------
+; Define the initial contents of the EEPROM.
+
+rst		code		__VECTOR_RESET
+		goto		init
+
+;----------------------------------------------------------------------
+; Interrupt service routine
+
+isr		code		__VECTOR_INT
+
+		ifbs		INTCON, TMR0IF	; TMR0 overflow
+		 banksel	icsp_timer
+		 incf		icsp_timer, f
+
+		 movlw		0xB2			; Prime TMR0
+		 banksel	TMR0
+		 movwf		TMR0
+
+		 bcf		INTCON, TMR0IF
+		endif_
+
+		retfie
+
+;----------------------------------------------------------------------
+; Data Strings
+
+msg_banner
+		DT		"1.4\n", 0
+
+;----------------------------------------------------------------------
+; Initialization
+
+PGM		code
+
+init    ; turn off comparators and A/D
+		banksel CCP1CON
+		clrf	CCP1CON
+
+		banksel ADCON0
+		clrf	ADCON0
+
+		clrf	PORTA
+		clrf	PORTB
+
+		clrf	LATA
+		clrf	LATB
+
+		; Configure PORTA for digital I/O
+		banksel ANSELA
+		clrf	ANSELA
+
+		banksel ANSELB
+		clrf	ANSELB
+
+		banksel WPUB
+		clrf	WPUB
+
+		; Initialize the IO port direction
+		banksel	TRISA
+		movlw   trisa_mask
+		movwf   TRISA
+		movlw   trisb_mask
+		movwf   TRISB
+
+		; Select internal oscillator and wait for clock to stablize
+		banksel	OSCCON
+		;movlw	OSCCON_VAL
+		;movwf   OSCCON
+		loop
+		; btfss	OSCSTAT, HFIOFS
+		 btfss	OSCSTAT, OSTS
+		endloop
+
+		; Configure TMR0 for 1:256 prescale, increment on FOSC/4
+		banksel		OPTION_REG
+		bcf			OPTION_REG, TMR0CS
+		bcf			OPTION_REG, PSA
+		movlw		b'00000111'
+		andwf		OPTION_REG, f
+
+		; Configure TMR0 interrupt and turn interrupts on
+		; banksel	INTCON
+		; bsf		INTCON, TMR0IE
+		; bsf		INTCON, GIE
+
+		ser_init	 FOSC, BAUD_RATE
+
+		; Hardware performs TX signal inversion so don't do it in software
+		banksel		BAUDCON
+		bcf			BAUDCON, SCKP
+
+		call		boot_detect
+
+		clrf		BSR
+
+;----------------------------------------------------------------------
+; Setup function
+
+setup
+		banksel		icsp_data
+		clrf		icsp_data
+		clrf		icsp_data+1
+		clrf		icsp_temp
+		clrf		icsp_timer
+
+;----------------------------------------------------------------------
+; Main loop
+
+main
+		; Wait for things to settle down
+		delay_ms	250
+
+		call		ser_clear
+
+		; Prompt
+		movlw		'K'
+		call		ser_out
+
+main_loop
+		; Check for any command characters available
+		call		ser_avail
+		ifweq		1
+		 bra		dispatch
+		endif_
+
+		bra			main_loop
+
+dispatch
+		; Wait for and get command character
+		call	 	ser_wait
+
+		; Dispatch command
+		switch
+		 case 'S'	; Start
+		  call		comm_read_byte
+		  call		icsp_start
+		 endcase
+
+		 case 'E'	; End
+		  call		comm_read_byte
+		  call		icsp_end
+		 endcase
+ 
+		 case 'C'	; Config
+		  call		comm_read_word
+		  call		icsp_config
+		 endcase
+ 
+		 case 'D'	; Load Data memory
+		  call		comm_read_byte
+		  call		icsp_load_data
+		 endcase
+
+		 case 'I'	; Increment
+		  movlw		1
+		  call		icsp_increment
+		 endcase
+
+		 case 'J'	; Jump
+		  call		comm_read_word
+		  movfw		icsp_data
+		  call		icsp_increment
+		 endcase
+
+		 case 'B'	; Bulk Erase Program
+		  call		comm_read_byte
+		  call		icsp_bulk_erase_program
+		 endcase
+
+		 case 'A'	; Bulk Erase Data
+		  call		comm_read_byte
+		  call		icsp_bulk_erase_data
+		 endcase
+
+		 case 'L'	; Load Program memory
+		  call		comm_read_word
+		  call		icsp_load_program
+		 endcase
+
+		 case 'M'	; Load Program memory and Increment
+		  call		comm_read_word
+		  call		icsp_load_program
+		  movlw		1
+		  call		icsp_increment
+		 endcase
+
+		 case 'P'	; Program
+		  call		comm_read_byte
+		  call		icsp_program
+		 endcase
+
+		 case 'R'	; Read Single Program Word
+		  movlw		0x04
+		  call		icsp_read_program
+		  movfw		icsp_data
+		  call		ser_out
+		  movfw		icsp_data + 1
+		  call		ser_out
+		 endcase
+
+		 case 'F'	; Fetch Program Words
+		  call		comm_read_word
+		  ; Only handles low byte
+		  movfw		icsp_data
+		  fromw		icsp_count
+		   call		icsp_read_program
+		   movfw	icsp_data
+		   call		ser_out
+		   movfw	icsp_data + 1
+		   call		ser_out
+		   movlw	1
+		   call		icsp_increment
+		  endfrom	icsp_count
+		 endcase
+
+		 case 'G'	; Fetch Data Words
+		  call		comm_read_word
+		  ; Only handles low byte
+		  movfw		icsp_data
+		  fromw		icsp_count
+		   call		icsp_read_data
+		   movfw	icsp_data
+		   call		ser_out
+		   movlw	1
+		   call		icsp_increment
+		  endfrom	icsp_count
+		 endcase
+
+		 case 'X'	; Reset Address
+		  call		icsp_reset_address
+		 endcase
+
+		 case 'Z'	; Hardware Reset
+		  call		icsp_hard_reset
+		 endcase 
+
+		 case 'T'	; Test low-level functions
+		  call		comm_read_byte
+		  call		icsp_test_api
+		 endcase
+
+		 case 'V'	; Version
+		  movlw		HIGH msg_banner
+		  movwf		FSR1H
+		  movlw		LOW msg_banner
+		  movwf		FSR1L
+		  call		serout_str
+		 endcase
+
+
+
+;----------------------------------------------------------------------
+; this handles: C, D, L, X, A, B, I, P
+
+		 case '1'	; send cmd
+          call		comm_read_byte
+		  banksel	icsp_data
+		  movfw		icsp_data
+		  call		icsp_send_cmd
+		 endcase
+
+		 case '2'	; send byte argument
+		  call		comm_read_word
+		  call		icsp_send_word
+		 endcase
+
+		 case '3'	; send word argument
+		  call		comm_read_byte
+		  banksel	icsp_data
+		  movwf		icsp_data
+		  clrf		icsp_data + 1
+		  call		icsp_send_word
+		 endcase
+
+		 default
+		  movlw		'['
+		  call		ser_out
+
+		  movlw		']'
+		  call		ser_out
+		endswitch
+
+		; Prompt
+		movlw		'K'
+		call		ser_out
+
+		goto		main_loop
+
+;----------------------------------------------------------------------
+; Fetch two additional data bytes LSB first
+
+comm_read_byte
+		call		ser_wait
+		movwf		icsp_data
+
+		return
+
+comm_read_word
+		call		ser_wait
+		movwf		icsp_data
+		call		ser_wait
+		movwf		icsp_data + 1
+
+		return
+
+;----------------------------------------------------------------------
+; Drive icsp_mpin low by making pin an output and driving low, hight by returning
+; and let the pullup do the work
+
+icsp_hard_reset
+		; not implemented
+
+		return
+
+icsp_release
+		; Release all other programming lines
+		banksel		TRISA
+		bsf			icsp_dpin
+		bsf			icsp_cpin
+		banksel		TRISB
+		bsf			icsp_vpin
+		bsf			icsp_svp1
+		bsf			icsp_svp2
+
+		return
+
+icsp_vccp_low
+		banksel		TRISB
+		bcf			icsp_vpin
+		banksel		LATB
+		bcf			icsp_vpin
+
+		return
+
+icsp_vccp_high
+		banksel		TRISB
+		bcf			icsp_vpin
+		banksel		LATB
+		bsf			icsp_vpin
+
+		return
+
+icsp_mclr_low
+		banksel		TRISB
+		bcf			icsp_svp2
+		banksel		LATB
+		bcf			icsp_svp2
+
+		return
+
+icsp_mclr_high
+		banksel		TRISB
+		bcf			icsp_svp2
+		banksel		LATB
+		bsf			icsp_svp2
+
+		return
+
+icsp_clk_output
+		banksel		TRISA
+		bcf			icsp_cpin
+
+		return
+
+icsp_clk_high
+		banksel		PORTA
+		bsf			icsp_cpin
+
+		return
+
+icsp_clk_low
+		banksel		PORTA
+		bcf			icsp_cpin
+
+		return
+
+icsp_clk_pulse
+		; Make clock an output and high
+		call		icsp_clk_output
+		call		icsp_clk_high
+
+		; delay at least 100ns
+		nop
+
+		call		icsp_clk_low
+
+		return
+
+icsp_dat_output
+		banksel		TRISA
+		bcf			icsp_dpin
+
+		return
+
+icsp_dat_input
+		banksel		TRISA
+		bsf			icsp_dpin
+
+		return
+
+icsp_dat_high
+		banksel		PORTA
+		bsf			icsp_dpin
+
+		return
+
+icsp_dat_low
+		banksel		PORTA
+		bcf			icsp_dpin
+
+		return
+
+icsp_test_api
+		banksel		icsp_temp
+		movfw		icsp_temp
+
+		; exec the indicated low-level function
+		switch
+		 case		'R'
+		  call		icsp_release
+		 endcase
+
+		 case		'U'
+		  call		icsp_vccp_low
+		 endcase
+
+		 case		'V'
+		  call		icsp_vccp_high
+		 endcase
+
+		 case		'L'
+		  call		icsp_mclr_low
+		 endcase
+
+		 case		'M'
+		  call		icsp_mclr_high
+		 endcase
+
+		 case		'F'
+		  call		icsp_clk_output
+		 endcase
+
+		 case		'G'
+		  call		icsp_clk_low
+		 endcase
+
+		 case		'H'
+		  call		icsp_clk_high
+		 endcase
+
+		 case		'P'
+		  call		icsp_clk_pulse
+		 endcase
+
+		 case		'A'
+		  call		icsp_dat_output
+		 endcase
+
+		 case		'B'
+		  call		icsp_dat_input
+		 endcase
+
+		 case		'C'
+		  call		icsp_dat_low
+		 endcase
+
+		 case		'D'
+		  call		icsp_dat_high
+		 endcase
+		endswitch
+
+		return
+
+;----------------------------------------------------------------------
+
+icsp_send_word
+		; Rotate low 14 bits so there is a 0 start and stop bit at each end
+		bcf			STATUS, C
+		banksel		icsp_data
+		rlf			icsp_data, f
+		rlf			icsp_data + 1, f
+
+		; Ensure the MSB is clear
+		bcf			icsp_data + 1, 7
+
+		; send LSB
+		movfw		icsp_data
+		call		icsp_send_byte
+
+		; send MSB
+		banksel		icsp_data
+		movfw		icsp_data + 1
+		call		icsp_send_byte
+
+		return
+
+icsp_send_byte
+		call		icsp_dat_output
+
+		banksel		icsp_temp
+		movwf		icsp_temp
+
+		from		icsp_bit_count, 8
+		 rrf		icsp_temp, f
+		 ifbc		STATUS, C
+		  call		icsp_dat_low
+		 else_
+		  call		icsp_dat_high
+		 endif_
+
+		 call		icsp_clk_pulse
+
+		 banksel	icsp_bit_count
+		endfrom		icsp_bit_count
+
+		call		icsp_dat_low
+
+		return
+
+icsp_send_cmd
+		call		icsp_dat_output
+
+		banksel		icsp_temp
+		movwf		icsp_temp
+
+		from		icsp_bit_count, 6
+		 rrf		icsp_temp, f
+		 ifbc		STATUS, C
+		  call		icsp_dat_low
+		 else_
+		  call		icsp_dat_high
+		 endif_
+
+		 call		icsp_clk_pulse
+
+		 banksel	icsp_bit_count
+		endfrom		icsp_bit_count
+
+		call		icsp_dat_low
+
+		return
+
+;----------------------------------------------------------------------
+
+icsp_read_word
+		; Read two bytes to form a 14bit word with a start and stop bit on each end
+		call		icsp_read_byte
+		banksel		icsp_temp
+		movfw		icsp_temp
+		movwf		icsp_data
+		call		icsp_read_byte
+		banksel		icsp_temp
+		movfw		icsp_temp
+		movwf		icsp_data + 1
+
+		; rotate both words right in order to remove the start bit
+		lsrf		icsp_data + 1, f
+		rrf			icsp_data, f
+
+		; mask off the top two bits of the high byte to form a 14bit word
+		movlw		0x3F
+		andwf		icsp_data + 1, f
+
+		return
+
+icsp_read_byte
+		call		icsp_dat_input
+
+		banksel		icsp_temp
+		clrf		icsp_temp
+
+		from		icsp_bit_count, 8
+		 rrf		icsp_temp, f
+
+		 ; The rising edge of the clock signals to prepare data
+		 call		icsp_clk_high
+
+		 ; delay at least 100ns
+		 nop
+
+		 ; Read data
+		 banksel	PORTA
+		 ifbs		icsp_dpin
+		  banksel	icsp_temp
+		  bsf		icsp_temp, 7
+		 else_
+		  banksel	icsp_temp
+		  bcf		icsp_temp, 7
+		 endif_
+
+		 ; falling edge of clock
+		 call		icsp_clk_low
+
+		 banksel	icsp_bit_count
+		endfrom		icsp_bit_count
+
+		return
+
+;----------------------------------------------------------------------
+; High level commands
+;----------------------------------------------------------------------
+
+icsp_start
+		call		icsp_release
+
+		nop
+
+		; program entry sequence  VPP-first
+		call		icsp_clk_output
+		call		icsp_clk_low
+		call		icsp_dat_output
+		call		icsp_dat_low
+
+		delay_ms	1
+		call		icsp_mclr_high
+		delay_ms	1
+		call		icsp_vccp_high
+		delay_ms	1
+
+		return
+
+icsp_end
+		call		icsp_vccp_low
+		delay_ms	1
+		call		icsp_mclr_low
+		delay_ms	1
+
+		call		icsp_release
+
+		return
+
+icsp_config
+		movlw		0x00
+		call		icsp_send_cmd
+		call		icsp_send_word
+
+		return
+
+icsp_load_program
+		movlw		0x02
+		call		icsp_send_cmd
+		call		icsp_send_word
+
+		return
+
+icsp_load_data
+		movlw		0x03
+		call		icsp_send_cmd
+		call		icsp_send_word
+
+		return
+
+icsp_reset_address
+		movlw		0x16
+		call		icsp_send_cmd
+
+		return
+
+icsp_read_program
+		movlw		0x04
+		call		icsp_send_cmd
+		call		icsp_read_word
+
+		return
+
+icsp_read_data
+		movlw		0x05
+		call		icsp_send_cmd
+		call		icsp_read_word
+
+		return
+
+icsp_program
+		ifeq		icsp_data, ICSP_MID
+		 movlw		0x18
+		 call		icsp_send_cmd
+		 delay_ms	2
+		 movlw		0x17
+		 call		icsp_send_cmd
+		else_
+		 movlw		0x08
+		 call		icsp_send_cmd
+		 delay_ms	5
+		endif_
+
+		return
+
+icsp_increment
+		banksel		icsp_inc_count
+		fromw		icsp_inc_count
+		 movlw		0x06
+		 call		icsp_send_cmd
+		 banksel	icsp_inc_count
+		endfrom		icsp_inc_count
+
+		return
+
+icsp_bulk_erase_program
+		movlw		0x09
+		call		icsp_send_cmd
+
+		banksel		icsp_data
+		ifeq		icsp_data, ICSP_MID
+		 delay_ms	5
+		 ; Begin programming
+		 movlw		0x08
+		 call		icsp_send_cmd
+		 delay_ms	5
+		 ; End Programming
+		 movlw		0x017
+		 call		icsp_send_cmd
+		endif_
+
+		delay_ms	5
+
+		return
+
+icsp_bulk_erase_data
+		movlw		0x0B
+		call		icsp_send_cmd
+
+		banksel		icsp_data
+		ifeq		icsp_data, ICSP_MID
+		 delay_ms	5
+		 ; Begin programming
+		 movlw		0x08
+		 call		icsp_send_cmd
+		 delay_ms	5
+		 ; End Programming
+		 movlw		0x017
+		 call		icsp_send_cmd
+		endif_
+
+		delay_ms	5
+
+		return
+
+;----------------------------------------------------------------------
+
+		end
