@@ -177,7 +177,7 @@ if device_id not in picdevice.PARAM:
     print(" ID: %04X rev %x not in device list" % (device_id, device_rev))
 
     print("End...")
-    icsp.send_end(com, programming_method)
+    icsp.send_end(com, device_param)
 
     print("Reset...")
     icsp.hard_reset(com)
@@ -203,7 +203,7 @@ conf_page_num = device_param['conf_page']
 
 if args.read:
     print("Reset Address...")
-    icsp.reset(com, programming_method)
+    icsp.reset(com, device_param)
 
     print("Reading Firmware...")
     prog_list = icsp.read_program_pages(com, device_param)
@@ -232,26 +232,26 @@ else:
     # Erase entire device including userid locations
     print("Erase Device...")
     icsp.load_config(com)
-    icsp.erase_program(com, programming_method)
-    icsp.erase_data(com, programming_method)
+    icsp.erase_program(com, device_param)
+    icsp.erase_data(com, device_param)
 
     print("Reset Address...")
-    icsp.reset(com, programming_method)
+    icsp.reset(com, device_param)
 
     print("Writing Program 0x%X .. 0x%X ..." % (0, max_page))
-    icsp.write_program_pages(com, programming_method, page_list, device_param)
+    icsp.write_program_pages(com, page_list, device_param)
 
     print("Writing Data 0x%X .. 0x%X ..." % (min_data, max_data))
-    icsp.write_data_pages(com, programming_method, page_list, device_param)
+    icsp.write_data_pages(com, page_list, device_param)
 
     print("Reset Address...")
-    icsp.reset(com, programming_method)
+    icsp.reset(com, device_param)
 
     print("Writing Config 0x%X ..." % conf_page_num)
-    icsp.write_config(com, programming_method, page_list, device_param)
+    icsp.write_config(com, page_list, device_param)
 
     print("Reset Address...")
-    icsp.reset(com, programming_method)
+    icsp.reset(com, device_param)
 
     print("Reading Firmware...")
     prog_list = icsp.read_program_pages(com, device_param)
