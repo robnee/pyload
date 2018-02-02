@@ -8,7 +8,8 @@
 
 PARAM = {
     0x04E: {
-        'desc':        "16F819",
+        'desc':        '16F819',
+        'family':      'mid',
         'max_page':    0x3F,
         'conf_page':   0x100,
         'conf_len':    0x10,
@@ -17,7 +18,8 @@ PARAM = {
         'num_latches': 4
     },
     0x138: {
-        'name':        "16F1822",
+        'name':        '16F1822',
+        'family':      'enh',
         'max_page':    0x3F,
         'conf_page':   0x400,
         'conf_len':    0x10,
@@ -26,7 +28,8 @@ PARAM = {
         'num_latches': 16
     },
     0x140: {
-        'name':        "16LF1822",
+        'name':        '16LF1822',
+        'family':      'enh',
         'max_page':    0x3F,
         'conf_page':   0x400,
         'conf_len':    0x10,
@@ -35,7 +38,8 @@ PARAM = {
         'num_latches': 16
     },
     0x13C: {
-        'name':        "16F1826",
+        'name':        '16F1826',
+        'family':      'enh',
         'max_page':    0x3F,
         'conf_page':   0x400,
         'conf_len':    0x10,
@@ -44,7 +48,8 @@ PARAM = {
         'num_latches': 8
     },
     0x13D: {
-        'name':        "16F1827",
+        'name':        '16F1827',
+        'family':      'enh',
         'max_page':    0x3F,
         'conf_page':   0x400,
         'conf_len':    0x10,
@@ -53,7 +58,8 @@ PARAM = {
         'num_latches': 8
     },
     0x0DC: {
-        'name':        "16F1840",
+        'name':        '16F1840',
+        'family':      'enh',
         'max_page':    0x7F,
         'conf_page':   0x400,
         'conf_len':    0x10,
@@ -62,7 +68,8 @@ PARAM = {
         'num_latches': 32
     },
     0x0A4: {
-        'name':        "16F1847",
+        'name':        '16F1847',
+        'family':      'enh',
         'max_page':    0xFF,
         'conf_page':   0x400,
         'conf_len':    0x10,
