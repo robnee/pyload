@@ -33,13 +33,8 @@ class serial:
 
 
 class Comm:
-    def __init__(self, port, baud=9600, data=8, timeout=1.0, logf=None):
-        # self.ser = serial.serial_for_url(port)
-        self.ser = serial(port)
-        self.ser.baudrate = baud
-        self.ser.bytesize = data
-        self.set_timeout(timeout)
-
+    def __init__(self, ser, logf=None):
+        self.ser = ser
         self.log_filename = logf
         if self.log_filename and os.path.exists(self.log_filename):
             os.unlink(self.log_filename)
@@ -51,9 +46,6 @@ class Comm:
 
         self.read_count = 0
         self.write_count = 0
-
-    def set_timeout(self, timeout):
-        self.ser.timeout = timeout
 
     def read(self, request=None):
         """ read a requested number of bytes.  If request is missing or zero read available """

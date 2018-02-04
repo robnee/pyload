@@ -90,7 +90,8 @@ DEFAULT_PORT = 'COM6'
 # Communications settings
 
 DATA = 8
-TOMS = 1000
+TOMS = 1
+MOCK = True
 
 # -------------------------------------------------------------------------------
 
@@ -126,7 +127,15 @@ if not args.read:
 
 # Init comm (holds target in reset)
 print('Initializing communications on {} at {} ...'.format(args.port, args.baud))
-com = comm.Comm(args.port, args.baud, DATA, TOMS/1000.0, args.log)
+if MOCK:
+    ser = mock.ICSP()
+else:
+    ser = serial.serial_for_url(port)
+    ser = serial(port)
+    ser.baudrate = args.baud
+    ser.bytesize = DATA
+    ser.timeout = TOMS
+com = comm.Comm(ser, args.log)
 
 # Bring target out of reset
 print('Reset...')
@@ -153,7 +162,7 @@ com.flush()
 print('Getting Version...')
 ver = icsp.get_version(com)
 print('Hardware version:', ver)
-print('Method: ', 'Midrange' if programming_method == icsp.MID else 'Enhanced Midrange')
+print('Method: ', icsp.FAMILY_NAMES[programming_method])
 
 print('Start...')
 icsp.send_start(com, programming_method)
@@ -290,7 +299,7 @@ else:
         print(" OK")
 
 print("End...")
-icsp.send_end(com, programming_method)
+icsp.send_end(com, device_param)
 
 print("Reset...")
 icsp.hard_reset(com)

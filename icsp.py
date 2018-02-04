@@ -49,13 +49,14 @@ D   - DAT high
 PAGESIZE = 64
 MID = b'\x00'
 ENH = b'\x01'
+FAMILY_NAMES = ('Midrange', 'Enhanced Midrange')
 
 """ICSP high-level API"""
 
 
-def write_config(com: Comm, firmware_list, param):
-    conf_page_num = param['conf_page_num']
-    conf_page_len = param['conf_len']
+def write_config(com: Comm, firmware_list, device):
+    conf_page_num = device['conf_page_num']
+    conf_page_len = device['conf_len']
     
     load_config(com)
 
@@ -64,13 +65,13 @@ def write_config(com: Comm, firmware_list, param):
         return
 
     # config words must be programed one at a time so use 1 for num latches
-    write_program_page(com, param, conf_page_num, page, conf_page_len, num_latches=1)
+    write_program_page(com, device, conf_page_num, page, conf_page_len, num_latches=1)
 
     print()
 
 
-def read_config(com: Comm, param):
-    conf_page_len = param['conf_len']
+def read_config(com: Comm, device):
+    conf_page_len = device['conf_len']
 
     load_config(com)
 
@@ -99,7 +100,7 @@ def read_config(com: Comm, param):
     return page
 
 
-def write_program_page(com: Comm, param, page_num: int, page, length: int, num_latches: int):
+def write_program_page(com: Comm, device, page_num: int, page, length: int, num_latches: int):
     """Write a single program page to the chip"""
 
     # If page is not defined or if it has no non-whitespace characters then skip
@@ -133,19 +134,19 @@ def write_program_page(com: Comm, param, page_num: int, page, length: int, num_l
         # this is the last word on the page
         if word_count % num_latches == 0 or word_count == length:
             load_program(com, word)
-            program(com, param)
+            program(com, device)
             inc(com)
         else:
             load_program_inc(com, word)
 
 
-def write_program_pages(com: Comm, firmware_list, param):
-    page_list = range(0, param['max_page'] + 1)
-    num_latches = param['num_latches']
+def write_program_pages(com: Comm, firmware_list, device):
+    page_list = range(0, device['max_page'] + 1)
+    num_latches = device['num_latches']
 
     for page_num in page_list:
         if page_num < len(firmware_list):
-            write_program_page(com, param, page_num, firmware_list[page_num], PAGESIZE // 2, num_latches)
+            write_program_page(com, device, page_num, firmware_list[page_num], PAGESIZE // 2, num_latches)
 
     print()
 
@@ -163,8 +164,8 @@ def read_program_page(com: Comm):
     return data
 
 
-def read_program_pages(com: Comm, param):
-    page_list = range(0, param['max_page'] + 1)
+def read_program_pages(com: Comm, device):
+    page_list = range(0, device['max_page'] + 1)
 
     chip_list = []
 
@@ -189,7 +190,7 @@ def read_program_pages(com: Comm, param):
     return chip_list
 
 
-def write_data_page(com: Comm, param, page_num, page):
+def write_data_page(com: Comm, device, page_num, page):
     """"Write a single program page to the chip"""
 
     # Data checks
@@ -213,17 +214,17 @@ def write_data_page(com: Comm, param, page_num, page):
         if chunk != '  ':
             byte = hex.hex_to_bytes(chunk, 2)
             load_data(com, byte)
-            program(com, param)
+            program(com, device)
 
         inc(com)
 
 
-def write_data_pages(com: Comm, data_list, param):
-    page_list = range(param['min_data'], param['max_data'] + 1)
+def write_data_pages(com: Comm, data_list, device):
+    page_list = range(device['min_data'], device['max_data'] + 1)
 
     for page_num in page_list:
         if page_num < len(data_list):
-            write_data_page(com, param, page_num, data_list[page_num])
+            write_data_page(com, device, page_num, data_list[page_num])
 
     print()
 
@@ -241,8 +242,8 @@ def read_data_page(com):
     return data
 
 
-def read_data_pages(com: Comm, param):
-    page_list = range(param['min_data'], param['max_data'] + 1)
+def read_data_pages(com: Comm, device):
+    page_list = range(device['min_data'], device['max_data'] + 1)
 
     chip_list = []
 
@@ -306,15 +307,14 @@ def send_command(com: Comm, cmd: bytes, data=None):
         raise RuntimeError('Error [{}] command:{} ICSP'.format(prompt, cmd))
 
 
-def send_start(com: Comm, param):
+def send_start(com: Comm, method):
     """reset target and start ICSP"""
-    method = MID if param['family'] == 'mid' else ENH
     send_command(com, b'S', method)
 
 
-def send_end(com: Comm, param):
+def send_end(com: Comm, device):
     """icsp_end"""
-    method = MID if param['family'] == 'mid' else ENH
+    method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'E', method)
 
 
@@ -333,9 +333,9 @@ def get_version(com: Comm):
     return ver.decode('utf-8').rstrip()
 
 
-def erase_program(com: Comm, param):
+def erase_program(com: Comm, device):
     """Switch to config segment and load a word"""
-    method = MID if param['family'] == 'mid' else ENH
+    method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'B', method)
 
 
@@ -352,9 +352,9 @@ def load_program_inc(com: Comm, data):
     send_command(com, b'M', data)
 
 
-def program(com: Comm, param):
+def program(com: Comm, device):
     """icsp internally or externally timed write depending on the method"""
-    method = MID if param['family'] == 'mid' else ENH
+    method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'P', method)
 
 
@@ -378,10 +378,10 @@ def hard_reset(com: Comm):
     send_command(com, b'Z')
 
 
-def reset(com: Comm, param):
+def reset(com: Comm, device):
     """reset"""
 
-    if param['family'] == 'mid':
+    if device['family'] == 'mid':
         # hard reset followed by a restart
         hard_reset(com)
         send_start(com, MID)
@@ -408,9 +408,9 @@ def read_program(com: Comm, req_count):
     return data
 
 
-def erase_data(com: Comm, param):
+def erase_data(com: Comm, device):
     """erase data memory"""
-    method = MID if param['family'] == 'mid' else ENH
+    method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'A', method)
 
 
