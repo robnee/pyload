@@ -2,7 +2,7 @@
 
 import sys
 import hex
-import comm.Comm as Comm
+import comm
 
 """
 The Host controller understands the following commands
@@ -54,7 +54,7 @@ FAMILY_NAMES = ('Midrange', 'Enhanced Midrange')
 """ICSP high-level API"""
 
 
-def write_config(com: Comm, firmware_list, device):
+def write_config(com: comm.Comm, firmware_list, device):
     conf_page_num = device['conf_page_num']
     conf_page_len = device['conf_len']
     
@@ -70,7 +70,7 @@ def write_config(com: Comm, firmware_list, device):
     print()
 
 
-def read_config(com: Comm, device):
+def read_config(com: comm.Comm, device):
     conf_page_len = device['conf_len']
 
     load_config(com)
@@ -100,7 +100,7 @@ def read_config(com: Comm, device):
     return page
 
 
-def write_program_page(com: Comm, device, page_num: int, page, length: int, num_latches: int):
+def write_program_page(com: comm.Comm, device, page_num: int, page, length: int, num_latches: int):
     """Write a single program page to the chip"""
 
     # If page is not defined or if it has no non-whitespace characters then skip
@@ -140,7 +140,7 @@ def write_program_page(com: Comm, device, page_num: int, page, length: int, num_
             load_program_inc(com, word)
 
 
-def write_program_pages(com: Comm, firmware_list, device):
+def write_program_pages(com: comm.Comm, firmware_list, device):
     page_list = range(0, device['max_page'] + 1)
     num_latches = device['num_latches']
 
@@ -151,7 +151,7 @@ def write_program_pages(com: Comm, firmware_list, device):
     print()
 
 
-def read_program_page(com: Comm):
+def read_program_page(com: comm.Comm):
     # read a full page of words (2x number of bytes)
     data = read_program(com, PAGESIZE // 2)
 
@@ -164,7 +164,7 @@ def read_program_page(com: Comm):
     return data
 
 
-def read_program_pages(com: Comm, device):
+def read_program_pages(com: comm.Comm, device):
     page_list = range(0, device['max_page'] + 1)
 
     chip_list = []
@@ -190,7 +190,7 @@ def read_program_pages(com: Comm, device):
     return chip_list
 
 
-def write_data_page(com: Comm, device, page_num, page):
+def write_data_page(com: comm.Comm, device, page_num, page):
     """"Write a single program page to the chip"""
 
     # Data checks
@@ -219,7 +219,7 @@ def write_data_page(com: Comm, device, page_num, page):
         inc(com)
 
 
-def write_data_pages(com: Comm, data_list, device):
+def write_data_pages(com: comm.Comm, data_list, device):
     page_list = range(device['min_data'], device['max_data'] + 1)
 
     for page_num in page_list:
@@ -242,7 +242,7 @@ def read_data_page(com):
     return data
 
 
-def read_data_pages(com: Comm, device):
+def read_data_pages(com: comm.Comm, device):
     page_list = range(device['min_data'], device['max_data'] + 1)
 
     chip_list = []
@@ -294,7 +294,7 @@ def wait_k(com):
     return data
 
 
-def send_command(com: Comm, cmd: bytes, data=None):
+def send_command(com: comm.Comm, cmd: bytes, data=None):
     """"package and send command with data"""
 
     if data is None:
@@ -307,18 +307,18 @@ def send_command(com: Comm, cmd: bytes, data=None):
         raise RuntimeError('Error [{}] command:{} ICSP'.format(prompt, cmd))
 
 
-def send_start(com: Comm, method):
+def send_start(com: comm.Comm, method):
     """reset target and start ICSP"""
     send_command(com, b'S', method)
 
 
-def send_end(com: Comm, device):
+def send_end(com: comm.Comm, device):
     """icsp_end"""
     method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'E', method)
 
 
-def get_version(com: Comm):
+def get_version(com: comm.Comm):
     """Get Host controller version"""
 
     cmd = b'V'
@@ -333,52 +333,52 @@ def get_version(com: Comm):
     return ver.decode('utf-8').rstrip()
 
 
-def erase_program(com: Comm, device):
+def erase_program(com: comm.Comm, device):
     """Switch to config segment and load a word"""
     method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'B', method)
 
 
-def load_config(com: Comm):
+def load_config(com: comm.Comm):
     # Switch to config segment and load a word
     send_command(com, b'C\x00\x00')
 
 
-def load_program(com: Comm, data):
+def load_program(com: comm.Comm, data):
     send_command(com, b'L', data)
 
 
-def load_program_inc(com: Comm, data):
+def load_program_inc(com: comm.Comm, data):
     send_command(com, b'M', data)
 
 
-def program(com: Comm, device):
+def program(com: comm.Comm, device):
     """icsp internally or externally timed write depending on the method"""
     method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'P', method)
 
 
-def inc(com: Comm):
+def inc(com: comm.Comm):
     """increment address"""
     send_command(com, b'I')
 
 
-def jump(com: Comm, count):
+def jump(com: comm.Comm, count):
     # jump address
     send_command(com, b'J' + count.to_bytes(2, 'little'))
 
 
-def reset_address(com: Comm):
+def reset_address(com: comm.Comm):
     # reset address to zero
     send_command(com, b'X')
 
 
-def hard_reset(com: Comm):
+def hard_reset(com: comm.Comm):
     # reset
     send_command(com, b'Z')
 
 
-def reset(com: Comm, device):
+def reset(com: comm.Comm, device):
     """reset"""
 
     if device['family'] == 'mid':
@@ -390,7 +390,7 @@ def reset(com: Comm, device):
         reset_address(com)
 
 
-def read_program(com: Comm, req_count):
+def read_program(com: comm.Comm, req_count):
     # read program memory
     cmd = b'F' + req_count.to_bytes(2, 'little')
 
@@ -408,18 +408,18 @@ def read_program(com: Comm, req_count):
     return data
 
 
-def erase_data(com: Comm, device):
+def erase_data(com: comm.Comm, device):
     """erase data memory"""
     method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'A', method)
 
 
-def load_data(com: Comm, data):
+def load_data(com: comm.Comm, data):
     """load data memory"""
     send_command(com, b'D', data)
 
 
-def read_data(com: Comm, req_count):
+def read_data(com: comm.Comm, req_count):
     """read data"""
     cmd = b'G' + req_count.to_bytes(2, 'little')
 
@@ -438,6 +438,6 @@ def read_data(com: Comm, req_count):
     return data
 
 
-def test_low_level(com: Comm, arg : bytes):
+def test_low_level(com: comm.Comm, arg : bytes):
     """ Low leve API tests """
     send_command(b'T', arg)
