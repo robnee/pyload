@@ -1,5 +1,5 @@
 """
-Mock icsp interface for testing.  Implements the serial port protocol that can be wrapped in a Comm object.  
+Mock icsp interface for testing.  Implements the serial port protocol that can be wrapped in a Comm object.
 
 Attempting to create a state machine that runs on every call to the serial port read API and reads and writes to and from the input and output queue until the state machine blocks on a serial read for the next icsp command byte.  At that point the inbound request can be satisfied from one of the two queues.
 
@@ -8,7 +8,7 @@ How to do that?  Perhaps this is an example of coroutine programming with yield?
 """
 
 
-class ICSP:
+class Port:
     def __init__(self):
         self._dtr = False
         self.open()
@@ -19,12 +19,13 @@ class ICSP:
 
     @property
     def dtr(self):
-        return _dtr
+        return self._dtr
 
-    @dtr.setter(self, state: bool):
-        if _dtr and not state:
+    @dtr.setter
+    def dtr(self, state: bool):
+        if self._dtr and not state:
             self.reset()
-        _dtr = state
+        self._dtr = state
 
     def read(self, num_bytes: int):
         while len(self.inq) < num_bytes:
@@ -34,7 +35,10 @@ class ICSP:
         return ret
 
     def readline(self):
-        nl = self.inq.find('\n')
+        if len(self.inq) < 1:
+            self.run()
+            
+        nl = self.inq.find(b'\n')
         if nl < 0:
             ret, self.inq = self.inq, bytes()
         else:
@@ -63,25 +67,85 @@ class ICSP:
     def ser_get(self):
         if not self.ser_avail():
             raise EOFError
-            
-        ret, self.outq = self.outq[0], self.outq[1:]
+
+        ret, self.outq = self.outq[:1], self.outq[1:]
         
         return ret
 
     def ser_out(self, data: bytes):
         self.inq += data
 
+
+class ICSP:
+    def __init__(self):
+        self.address = 0
+        
     def reset(self):
         self.ser_out(b'K')
         
     def run(self):
+        # print('running addr:', hex(self.address), 'in:', self.inq, 'out:', self.outq)
         while True:
-            b = self.ser_get()
-        
-            if b == b'V':
+            c = self.ser_get()
+
+            if c == b'V':
                 self.ser_out(b'V1.4\n')
-            
+            elif c == b'S':
+                # read extra byte
+                _ = self.ser_get()
+                self.address = 0
+            elif c == b'X':
+                self.address = 0
+            elif c == b'E':
+                # read extra byte
+                _ = self.ser_get()
+            elif c == b'C':
+                # read two extra bytes
+                _ = self.ser_get()
+                _ = self.ser_get()
+                self.address = 0x8000
+            elif c == b'I':
+                self.address += 1
+            elif c == b'J':
+                a = self.ser_get()
+                b = self.ser_get()
+                self.address += int.from_bytes(a + b, 'little')
+            elif c == b'F':
+                a = self.ser_get()
+                b = self.ser_get()
+                num_words = int.from_bytes(a + b, 'little')
+                
+                for _ in range(num_words):
+                    if self.address == 0x8006:
+                        id = (0b10_0111_000 << 5) + 0b0_0101
+                        self.ser_out(id.to_bytes(2, 'little'))
+                    else:
+                        self.ser_out(b'\xFF\x3F')
+                    self.address += 1
+            elif c == b'G':
+                a = self.ser_get()
+                b = self.ser_get()
+                num_words = int.from_bytes(a + b, 'little')
+                if self.address < 0xF000:
+                    self.address = 0xF000
+                
+                for _ in range(num_words):
+                    self.ser_out(b'\xFF')
+                    self.address += 1
+                
+            elif c == 'D':
+                pass
+            elif c == 'BALMP':
+                pass
             self.ser_out(b'K')
             
             if not self.ser_avail():
                 break
+        # print('done in:', self.inq, 'out:', self.outq)
+        
+
+class ICSPHost(Port, ICSP):
+    def __init__(self):
+        Port.__init__(self)
+        ICSP.__init__(self)
+        pass
