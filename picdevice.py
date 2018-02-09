@@ -78,3 +78,36 @@ PARAM = {
         'num_latches': 32
     }
 }
+
+import sys
+import importlib
+
+
+class ImportHack:
+    def __init__(self):
+        # update or append instance
+        for i, mp in enumerate(sys.meta_path):
+            if isinstance(mp, self.__class__):
+                sys.meta_path[i] = self
+                return
+        
+        sys.meta_path.append(self)
+  
+    @staticmethod
+    def find_spec(fullname, path, target):
+        loc = __file__.rpartition('/')[0] + '/' + fullname + '.py'
+        try:
+            # test if target exists in same location without use of additional imports
+            f = open(loc)
+            f.close()
+            return importlib.util.spec_from_file_location(fullname, loc)
+        except:
+            pass
+
+        
+if __name__ == '__main__':
+    ImportHack()
+    
+    import icsp
+    
+    print(icsp.ENH)

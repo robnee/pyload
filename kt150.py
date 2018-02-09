@@ -78,6 +78,7 @@ import argparse
 
 import picdevice
 import hex
+import mock
 import comm
 import icsp
 
@@ -125,10 +126,17 @@ if not args.read:
     if not args.quiet:
         hex.dump_pages(page_list)
 
+if args.log:
+    if os.path.exists(args.log):
+        os.unlink(args.log)
+    logf = open(args.log, 'a')
+
+args.log = sys.stdout
+
 # Init comm (holds target in reset)
 print('Initializing communications on {} at {} ...'.format(args.port, args.baud))
 if MOCK:
-    ser = mock.ICSP()
+    ser = mock.ICSPHost()
 else:
     ser = serial.serial_for_url(port)
     ser = serial(port)
@@ -186,7 +194,7 @@ if device_id not in picdevice.PARAM:
     print(" ID: %04X rev %x not in device list" % (device_id, device_rev))
 
     print("End...")
-    icsp.send_end(com, device_param)
+    icsp.send_end(com, programming_method)
 
     print("Reset...")
     icsp.hard_reset(com)
@@ -299,7 +307,7 @@ else:
         print(" OK")
 
 print("End...")
-icsp.send_end(com, device_param)
+icsp.send_end(com, programming_method)
 
 print("Reset...")
 icsp.hard_reset(com)

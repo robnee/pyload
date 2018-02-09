@@ -35,9 +35,7 @@ class serial:
 class Comm:
     def __init__(self, ser, logf=None):
         self.ser = ser
-        self.log_filename = logf
-        if self.log_filename and os.path.exists(self.log_filename):
-            os.unlink(self.log_filename)
+        self.logf = logf
 
         # print('timeout', ser.timeout)
         # print('xonxoff', ser.xonxoff)
@@ -87,26 +85,23 @@ class Comm:
             self.log(data, "DISC")
 
     def log(self, data, desc):
-        if self.log_filename:
-            # log the data
-            with open(self.log_filename, 'a') as log:
-                log.write("%8.3f %s %3d : " % (0, desc, len(data)))
-                for c in data:
-                    if ord(' ') <= c <= ord('~'):
-                        log.write("%02x[%s] " % (c, chr(c)))
-                    else:
-                        log.write("%02x " % c)
-
-                log.write("\n")
+        if self.logf:
+            self.logf.write("%8.3f %s %3d : " % (0, desc, len(data)))
+            for c in data:
+                if ord(' ') <= c <= ord('~'):
+                    self.logf.write("%02x[%s] " % (c, chr(c)))
+                else:
+                    self.logf.write("%02x " % c)
+    
+            self.logf.write("\n")
 
     def close(self):
         self.ser.close()
         self.ser = None
 
-        if self.log_filename:
-            with open(self.log_filename, 'a') as log:
-                log.write("\nbytes read: {} bytes writen: {}".format(
-                    self.read_count, self.write_count))
+        if self.logf:
+            self.logf.write("\nbytes read: {} bytes writen: {}".format(
+                self.read_count, self.write_count))
 
     def dtr_active(self, state):
         self.ser.dtr = state

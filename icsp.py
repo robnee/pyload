@@ -49,7 +49,7 @@ D   - DAT high
 PAGESIZE = 64
 MID = b'\x00'
 ENH = b'\x01'
-FAMILY_NAMES = ('Midrange', 'Enhanced Midrange')
+FAMILY_NAMES = {MID: 'Midrange', ENH: 'Enhanced Midrange'}
 
 """ICSP high-level API"""
 
@@ -312,9 +312,8 @@ def send_start(com: comm.Comm, method):
     send_command(com, b'S', method)
 
 
-def send_end(com: comm.Comm, device):
+def send_end(com: comm.Comm, method):
     """icsp_end"""
-    method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'E', method)
 
 
@@ -328,7 +327,7 @@ def get_version(com: comm.Comm):
 
     prompt = wait_k(com)
     if prompt != b'K':
-        raise RuntimeError('Error [{}] command:{} ICSP'.format(prompt, cmd))
+        raise RuntimeError('Error [{} {}] command:{} ICSP'.format(ver, prompt, cmd))
 
     return ver.decode('utf-8').rstrip()
 
@@ -340,7 +339,7 @@ def erase_program(com: comm.Comm, device):
 
 
 def load_config(com: comm.Comm):
-    # Switch to config segment and load a word
+    """Switch to config segment and load a word"""
     send_command(com, b'C\x00\x00')
 
 
