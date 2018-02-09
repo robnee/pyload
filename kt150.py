@@ -72,9 +72,35 @@
 #
 # -------------------------------------------------------------------------------
 
+import os
 import sys
 import time
 import argparse
+import importlib
+
+
+class ImportHack:
+    def __init__(self):
+        # update or append instance
+        for i, mp in enumerate(sys.meta_path):
+            if mp.__class__.__name__ == 'ImportHack':
+                sys.meta_path[i] = self
+                return
+        
+        sys.meta_path.append(self)
+
+    @staticmethod
+    def find_spec(fullname, path, target):
+        loc = __file__.rpartition('/')[0] + '/' + fullname + '.py'
+        try:
+            # test if target exists in same location without use of additional imports
+            f = open(loc)
+            f.close()
+            return importlib.util.spec_from_file_location(fullname, loc)
+        except:
+            pass
+
+ImportHack()
 
 import picdevice
 import hex
@@ -93,8 +119,7 @@ DEFAULT_PORT = 'COM6'
 DATA = 8
 TOMS = 1
 MOCK = True
-
-# -------------------------------------------------------------------------------
+TMP = os.environ['HOME']
 
 parser = argparse.ArgumentParser(prog='flash', description='icsp programming tool.')
 parser.add_argument('-p', '--port', default=DEFAULT_PORT, help='serial device')
@@ -122,7 +147,7 @@ if args.filename is None:
 
 # unless we are reading out the chip firmware read a new file to load
 if not args.read:
-    page_list = hex.read_hex(args.filename)
+    page_list = hex.read_hex(TMP + '/' + args.filename)
     if not args.quiet:
         hex.dump_pages(page_list)
 
@@ -244,7 +269,7 @@ if args.read:
     if not args.quiet:
         hex.dump_pages(chip_list)
 
-    hex.write_hex(args.filename, chip_list)
+    hex.write_hex(TMP + '/' + args.filename, chip_list)
 else:
     # Erase entire device including userid locations
     print("Erase Device...")
