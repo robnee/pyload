@@ -7,6 +7,8 @@ How to do that?  Perhaps this is an example of coroutine programming with yield?
 
 """
 
+import hexfile
+
 
 class Port:
     def __init__(self):
@@ -120,7 +122,8 @@ class ICSP:
                         id = (0b10_0111_000 << 5) + 0b0_0101
                         self.ser_out(id.to_bytes(2, 'little'))
                     else:
-                        self.ser_out(b'\xFF\x3F')
+                        word = self.get_word(self.address)
+                        self.ser_out(word)
                     self.address += 1
             elif c == b'G':
                 a = self.ser_get()
@@ -142,10 +145,27 @@ class ICSP:
             if not self.ser_avail():
                 break
         # print('done in:', self.inq, 'out:', self.outq)
-        
 
-class ICSPHost(Port, ICSP):
-    def __init__(self):
+        
+class Target:
+    def __init__(self, firmware=None):
+        self.firmware = firmware
+
+    def get_word(self, word_address: int):
+        """access a two byte firmware word by word address"""
+        page_num, word_num = divmod(word_address, hexfile.PAGESIZE // 2)
+        byte_num = word_num * 2
+
+        print(word_address, 'pn:', page_num, 'bn:', byte_num, 'wn:', word_num)
+
+        if page_num < len(self.firmware):
+            page = bytes(self.firmware[page_num])
+
+            return page[byte_num: byte_num + 2]
+
+
+class ICSPHost(Port, ICSP, Target):
+    def __init__(self, firmware):
         Port.__init__(self)
         ICSP.__init__(self)
-        pass
+        Target.__init__(self, firmware)
