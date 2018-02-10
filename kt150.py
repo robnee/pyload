@@ -104,6 +104,7 @@ ImportHack()
 
 import picdevice
 import hex
+import hexfile
 import mock
 import comm
 import icsp
@@ -161,7 +162,11 @@ args.log = sys.stdout
 # Init comm (holds target in reset)
 print('Initializing communications on {} at {} ...'.format(args.port, args.baud))
 if MOCK:
-    ser = mock.ICSPHost()
+    firmware = hexfile.Hexfile()
+    with open(TMP + '/Documents/' + 'icsp.hex') as fp:
+        firmware.read(fp)
+        
+    ser = mock.ICSPHost(firmware)
 else:
     ser = serial.serial_for_url(port)
     ser = serial(port)
