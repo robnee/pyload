@@ -1,13 +1,13 @@
 # -------------------------------------------------------------------------------
 
 import sys
-import hex
+import hexfile
 import comm
 
 """
 The Host controller understands the following commands
 
-Sn	- Start programming.  Hold MCLR on target low and send MCHP signature 
+Sn	- Start programming.  Hold MCLR on target low and send MCHP signature
 En	- End programming.  Release MCLR on target
 X	- Reset the Address counter to zero
 I	- Increment the Address counter
@@ -54,221 +54,188 @@ FAMILY_NAMES = {MID: 'Midrange', ENH: 'Enhanced Midrange'}
 """ICSP high-level API"""
 
 
+def show_progress(cmd: bytes):
+    if cmd in (b'G', b'D'):
+        sys.stderr.write('.')
+    elif cmd == b'E':
+        sys.stderr.write('x')
+    elif cmd == b'S':
+        sys.stderr.write('>')
+    elif cmd in (b'L', b'F'):
+        sys.stderr.write(':')
+        
+    sys.stderr.flush()
+
+
 def write_config(com: comm.Comm, firmware_list, device):
-    conf_page_num = device['conf_page_num']
+    conf_page_num = device['conf_page']
     conf_page_len = device['conf_len']
-    
+
     load_config(com)
 
     page = firmware_list[conf_page_num]
     if page is None:
         return
 
+    data = bytes(page)[:conf_page_len * 2]
     # config words must be programed one at a time so use 1 for num latches
-    write_program_page(com, device, conf_page_num, page, conf_page_len, num_latches=1)
+    # write_program_page(com, device, conf_page_num, bytes(data), num_latches=1)
+    write_page(com, device, b'L', bytes(data), num_latches=1)
 
     print()
 
 
-def read_config(com: comm.Comm, device):
+def read_config(com: comm.Comm, device) -> bytes:
     conf_page_len = device['conf_len']
 
     load_config(com)
 
     # read specified number of config words
-    data = read_program(com, conf_page_len)
+    data = read_page(com, b'F', conf_page_len)
 
     count = len(data)
 
     if count != conf_page_len * 2:
-        print("Short config read [{} {}]".format(count, conf_page_len))
-        print("[", hex.bytes_to_hex(data), "]")
+        print(f"Short config read [{count} {conf_page_len}]")
+        print("[", hexfile.bytes_to_hex(data), "]")
 
-    page = hex.bytes_to_hex(data)
-
-    sys.stderr.write('.')
-    sys.stderr.flush()
-
-    # pad the page to full length
-    page += "    " * (PAGESIZE // 2 - conf_page_len)
-
-    # Remove NULL commands
-    for offset in range(0, len(page), 4):
-        if page[offset:offset + 4] == 'FF3F':
-            page = page[:offset] + '    ' + page[offset + 4:]
-
-    return page
+    return data
 
 
-def write_program_page(com: comm.Comm, device, page_num: int, page, length: int, num_latches: int):
-    """Write a single program page to the chip"""
+def write_page(com: comm.Comm, device, cmd_code: bytes, data: bytes, num_latches=None):
+    """"Write a single page or skip the range if empty"""
 
-    # If page is not defined or if it has no non-whitespace characters then skip
-    if page is None or page.isspace():
-        jump(com, length)
-        sys.stderr.write('.')
-        sys.stderr.flush()
+    # Check for empty page and skip
+    if data is None:
+        jump(com, PAGESIZE // 2)
+        show_progress(b'S')
         return
 
-    # each word is 4 characters
-    byte_count = len(page)
-    if byte_count < length * 4:
-        raise RuntimeError("Invalid program page size ({}) for page {}".format(byte_count, page_num))
+    if not num_latches:
+        num_latches = device['num_latches']
 
-    sys.stderr.write(':')
-    sys.stderr.flush()
+    show_progress(cmd_code)
 
-    word_count = 0
-    for word_num in range(0, byte_count, 4):
-        chunk = page[word_num: word_num + 4]
-
-        # Replace empty words
-        if chunk == '    ':
-            chunk = 'FFFF'
-
-        word = hex.hex_to_bytes(chunk, 2)
-
-        word_count += 1
+    word_count = 1
+    for word_num in range(0, len(data), 2):
+        word = data[word_num: word_num + 2]
 
         # Issue a program command at the end of the set of data latches or if
         # this is the last word on the page
-        if word_count % num_latches == 0 or word_count == length:
+        if cmd_code == b'D':
+            load_data(com, word)
+            program(com, device)
+            inc(com)
+        elif word_count % num_latches == 0 or word_count == len(data):
             load_program(com, word)
             program(com, device)
             inc(com)
         else:
             load_program_inc(com, word)
 
+        word_count += 1
+
+
+def write_pages(com: comm.Comm, device, cmd_code: bytes, page_list, firmware_list):
+    for page_num in page_list:
+        page = firmware_list[page_num]
+        data = bytes(page) if page else None
+        write_page(com, device, cmd_code, data)
+
+    print()
+
 
 def write_program_pages(com: comm.Comm, firmware_list, device):
     page_list = range(0, device['max_page'] + 1)
-    num_latches = device['num_latches']
-
-    for page_num in page_list:
-        if page_num < len(firmware_list):
-            write_program_page(com, device, page_num, firmware_list[page_num], PAGESIZE // 2, num_latches)
-
-    print()
+    write_pages(com, device, b'L', page_list, firmware_list)
 
 
-def read_program_page(com: comm.Comm):
-    # read a full page of words (2x number of bytes)
-    data = read_program(com, PAGESIZE // 2)
+def write_data_pages(com: comm.Comm, firmware_list, device):
+    page_list = range(device['min_data'], device['max_data'] + 1)
+    write_pages(com, device, b'D', page_list, firmware_list)
 
-    count = len(data)
 
-    if count != PAGESIZE:
-        print("Short page [{}]".format(count))
-        print("[", hex.bytes_to_hex(data), "]")
+def read_page(com: comm.Comm, cmd_code: bytes, req_count: int) -> bytes:
+    # read program memory
+    cmd = cmd_code + req_count.to_bytes(2, 'little')
+    com.write(cmd)
+
+    count, data = com.read(req_count * 2)
+    if count != req_count * 2:
+        raise RuntimeError("Error [c={}|d={} {}".format(count, data,
+                           hexfile.bytes_to_hex(data)))
+
+    prompt = wait_k(com)
+    if prompt != b'K':
+        raise RuntimeError(f'Error [{prompt}] command:{cmd} ICSP')
 
     return data
 
 
-def read_program_pages(com: comm.Comm, device):
-    page_list = range(0, device['max_page'] + 1)
+def read_pages(com: comm.Comm, cmd_code: bytes, page_nums):
+    """ read all pages and create a list """
 
-    chip_list = []
+    page_list = []
 
-    # Read all pages and create a list
-    for page_num in page_list:
-        data = read_program_page(com)
+    for page_num in page_nums:
+        data = read_page(com, cmd_code, PAGESIZE // 2)
 
-        page = hex.bytes_to_hex(data)
+        count = len(data)
+        if count != PAGESIZE:
+            print(f"Short page num {page_num} [{count}]")
+            print("[", hexfile.bytes_to_hex(data), "]")
 
-        sys.stderr.write(':')
-        sys.stderr.flush()
+        show_progress(cmd_code)
 
-        # Remove NULL commands
-        for offset in range(0, len(page), 4):
-            if page[offset:offset + 4] == 'FF3F':
-                page = page[:offset] + '    ' + page[offset + 4:]
+        page_list.append(data)
 
-        if page.strip() != '':
-            hex.add_page(chip_list, page_num)
-            chip_list[page_num] = page
-
-    return chip_list
+    return page_list
 
 
-def write_data_page(com: comm.Comm, device, page_num, page):
-    """"Write a single program page to the chip"""
+def read_program(com: comm.Comm, device) -> hexfile.Hexfile:
+    page_nums = range(0, device['max_page'] + 1)
+    page_list = read_pages(com, b'F', page_nums)
 
-    # Data checks
-    if page is None:
-        jump(com, PAGESIZE // 2)
-        sys.stderr.write('.')
-        sys.stderr.flush()
-        return
-
-    # each word is 4 characters
-    byte_count = len(page)
-    if byte_count != PAGESIZE * 2:
-        raise RuntimeError("Invalid data page size ({}) for page {}".format(byte_count, page_num))
-
-    sys.stderr.write(':')
-    sys.stderr.flush()
-    
-    send_command(com, b'S',  )
-    for word_num in range(0, byte_count, 4):
-        chunk = page[word_num: word_num + 2]
-        if chunk != '  ':
-            byte = hex.hex_to_bytes(chunk, 2)
-            load_data(com, byte)
-            program(com, device)
-
-        inc(com)
-
-
-def write_data_pages(com: comm.Comm, data_list, device):
-    page_list = range(device['min_data'], device['max_data'] + 1)
-
-    for page_num in page_list:
-        if page_num < len(data_list):
-            write_data_page(com, device, page_num, data_list[page_num])
-
-    print()
-
-
-def read_data_page(com):
-    # read a half page of words.  Each byte will be padded out with an extra for
-    # writing to hex file so that the resultant page will be full size
-    data = read_data(com, PAGESIZE // 2)
-
-    count = len(data)
-    if count != PAGESIZE // 2:
-        print("Short data page [{}]".format(count))
-        print("[", hex.bytes_to_hex(data), "]")
-
-    return data
-
-
-def read_data_pages(com: comm.Comm, device):
-    page_list = range(device['min_data'], device['max_data'] + 1)
-
-    chip_list = []
+    pages = hexfile.Hexfile()
 
     # Read all pages and create a list
-    for page_num in page_list:
-        data = read_data_page(com)
+    for page_num, data in zip(page_nums, page_list):
+        if data:
+            page = hexfile.Page(data)
 
-        # data pages are only bytes.  Convert back to words
-        page = ''
-        for i in range(0, len(data)):
-            page = page + hex.bytes_to_hex(data[i:i + 1]) + '00'
+            # Remove NULL words
+            for offset in range(0, len(page), 2):
+                word = page[offset: offset + 2]
+                if word == ['FF', '3F']:
+                    page[offset] = None
+                    page[offset + 1] = None
 
-        sys.stderr.write('.')
-        sys.stderr.flush()
+            if any(page):
+                pages[page_num] = page
 
-        # Remove NULL commands
-        for offset in range(0, len(page), 4):
-            if page[offset:offset + 4] == 'FF00':
-                page = page[:offset] + '    ' + page[offset + 4:]
+    return pages
 
-        if page.strip() != '':
-            hex.add_page(chip_list, page_num)
-            chip_list[page_num] = page
 
-    return chip_list
+def read_data(com: comm.Comm, device):
+    page_nums = range(device['min_data'], device['max_data'] + 1)
+    data_list = read_pages(com, b'G', page_nums)
+
+    pages = hexfile.Hexfile()
+
+    for page_num, data in zip(page_nums, data_list):
+        if data:
+            page = hexfile.Page(data)
+
+            for offset in range(0, len(page), 2):
+                word = [page[offset], '00']
+                if word == ['FF', '00']:
+                    page[offset] = None
+                    page[offset + 1] = None
+
+            if any(page):
+                pages[page_num] = page
+
+    return pages
 
 # ICSP low-level protocol
 
@@ -304,7 +271,7 @@ def send_command(com: comm.Comm, cmd: bytes, data=None):
 
     prompt = wait_k(com)
     if prompt != b'K':
-        raise RuntimeError('Error [{}] command:{} ICSP'.format(prompt, cmd))
+        raise RuntimeError(f'Error expecting prompt [{prompt}] command:{cmd} data:{data} ICSP')
 
 
 def send_start(com: comm.Comm, method):
@@ -327,7 +294,7 @@ def get_version(com: comm.Comm):
 
     prompt = wait_k(com)
     if prompt != b'K':
-        raise RuntimeError('Error [{} {}] command:{} ICSP'.format(ver, prompt, cmd))
+        raise RuntimeError(f'Error [{ver} {prompt}] command:{cmd} ICSP')
 
     return ver.decode('utf-8').rstrip()
 
@@ -341,6 +308,11 @@ def erase_program(com: comm.Comm, device):
 def load_config(com: comm.Comm):
     """Switch to config segment and load a word"""
     send_command(com, b'C\x00\x00')
+
+
+def load_data(com: comm.Comm, data):
+    """load data memory"""
+    send_command(com, b'D', data)
 
 
 def load_program(com: comm.Comm, data):
@@ -389,54 +361,12 @@ def reset(com: comm.Comm, device):
         reset_address(com)
 
 
-def read_program(com: comm.Comm, req_count):
-    # read program memory
-    cmd = b'F' + req_count.to_bytes(2, 'little')
-
-    com.write(cmd)
-
-    count, data = com.read(req_count * 2)
-    if count != req_count * 2:
-        raise RuntimeError("Error [c={}|d={} {}".format(count, data,
-                           hex.bytes_to_hex(data)))
-
-    prompt = wait_k(com)
-    if prompt != b'K':
-        raise RuntimeError('Error [{}] command:{} ICSP'.format(prompt, cmd))
-
-    return data
-
-
 def erase_data(com: comm.Comm, device):
     """erase data memory"""
     method = MID if device['family'] == 'mid' else ENH
     send_command(com, b'A', method)
 
 
-def load_data(com: comm.Comm, data):
-    """load data memory"""
-    send_command(com, b'D', data)
-
-
-def read_data(com: comm.Comm, req_count):
-    """read data"""
-    cmd = b'G' + req_count.to_bytes(2, 'little')
-
-    com.write(cmd)
-
-    count, data = com.read(req_count)
-
-    if count != req_count:
-        raise RuntimeError("Error [c={}|d={} {}".format(count, data,
-                           hex.bytes_to_hex(data)))
-
-    prompt = wait_k(com)
-    if prompt != b'K':
-        raise RuntimeError('Error [{}] command:{} ICSP'.format(prompt, cmd))
-
-    return data
-
-
-def test_low_level(com: comm.Comm, arg : bytes):
-    """ Low leve API tests """
-    send_command(b'T', arg)
+def test_low_level(com: comm.Comm, arg: bytes):
+    """ Low level API tests """
+    send_command(com, b'T', arg)

@@ -1,7 +1,7 @@
 #! /usr/bin/python3
 
 # -------------------------------------------------------------------------------
-#    $Id: bload.py 764 2017-12-18 00:01:53Z rnee $
+#    $Id: bload.py 814 2018-02-16 02:44:24Z rnee $
 #
 
 import sys
@@ -16,7 +16,7 @@ PAGESIZE = 64
 # -------------------------------------------------------------------------------
 
 
-def get_address(page_num):
+def get_address(page_num: int) -> bytes:
     """ Return address as a LSB + MSB 16 bit word """
     addr = page_num * PAGESIZE // 2
 
@@ -28,7 +28,7 @@ def calc_checksum(data):
     return sum(data) & 0xFF
 
 
-def get_command(cmd_code, page_num, data=None):
+def get_command(cmd_code, page_num: int, data: bytes=None) -> bytes:
     """ Generate a command string including a command char, address and checksum """
 
     if data is None:
@@ -40,7 +40,7 @@ def get_command(cmd_code, page_num, data=None):
     return bytes(cmd_code) + address + data + checksum
 
 
-def wait_k(com):
+def wait_k(com) -> bytes:
     """ Wait for K (OK) prompt """
 
     data = bytes()
@@ -95,12 +95,12 @@ def get_info(com):
     return struct.unpack('BBHHHHxxxxxx', data)
 
 
-def erase_program_page(com, page_num):
+def erase_program_page(com, page_num: int):
     cmd = get_command(b'E', page_num)
     com.write(cmd)
 
 
-def write_page(com, cmd_code, page_num, page_bytes):
+def write_page(com, cmd_code: bytes, page_num: int, page_bytes):
     """ Write a single program page to the chip """
 
     length = len(page_bytes)
@@ -112,7 +112,7 @@ def write_page(com, cmd_code, page_num, page_bytes):
     com.write(cmd)
 
 
-def write_pages(com, cmd, pages, page_nums):
+def write_pages(com, cmd: bytes, pages: hexfile.Hexfile, page_nums):
     for page_num in page_nums:
         page = pages[page_num] if page_num < len(pages) else None
 
@@ -123,9 +123,9 @@ def write_pages(com, cmd, pages, page_nums):
                 erase_program_page(com, page_num)
                 show_progress(b'E')
             else:
-                # Skip
+                # write an empty page to erase data
+                write_page(com, cmd, page_num, b'\xFF' * PAGESIZE)
                 show_progress(b'S')
-                continue
         else:
             write_page(com, cmd, page_num, bytes(page))
             show_progress(cmd)
@@ -133,14 +133,14 @@ def write_pages(com, cmd, pages, page_nums):
         prompt = wait_k(com)
         if prompt != b'K':
             for c in prompt:
-                print('[%02X] ' % ord(c), end='')
+                print('[%02X] ' % c, end='')
 
             print('Error [%s] writing page 0x%03X:0x%04X' % (prompt, page_num,
                   page_num * PAGESIZE // 2))
             return
 
 
-def read_page(com, cmd, page_num):
+def read_page(com, cmd: bytes, page_num: int) -> bytes:
     # allow 5 read tries
     for retry in range(5):
         com.write(cmd)
@@ -171,7 +171,7 @@ def read_page(com, cmd, page_num):
     return b''
 
 
-def read_config(com):
+def read_config(com) -> bytes:
     page_num = 0
 
     # Read all pages and create a list
@@ -186,20 +186,20 @@ def read_config(com):
     return data
 
 
-def show_progress(cmd):
-    if cmd == b'C' or cmd == b'R' or cmd == b'W':
+def show_progress(cmd: bytes):
+    if cmd in (b'C', b'R', b'W'):
         sys.stderr.write('.')
     elif cmd == b'E':
         sys.stderr.write('x')
     elif cmd == b'S':
         sys.stderr.write('>')
-    elif cmd == b'D' or cmd == b'F':
+    elif cmd in (b'D', b'F'):
         sys.stderr.write(':')
 
     sys.stderr.flush()
 
 
-def read_pages(com, cmd_code, page_nums):
+def read_pages(com, cmd_code: bytes, page_nums):
     """Read all pages and creates a list"""
 
     page_list = []
@@ -218,7 +218,7 @@ def read_pages(com, cmd_code, page_nums):
     return page_list
 
 
-def read_program(com, page_nums):
+def read_program(com, page_nums) -> hexfile.Hexfile:
     """Read all pages and create a list"""
 
     prog_list = read_pages(com, b'R', page_nums)
@@ -242,7 +242,7 @@ def read_program(com, page_nums):
     return pages
 
 
-def read_data(com, page_nums):
+def read_data(com, page_nums) -> hexfile.Hexfile:
     """Read all pages and create a list"""
 
     data_list = read_pages(com, b'F', page_nums)
@@ -266,7 +266,7 @@ def read_data(com, page_nums):
     return pages
 
 
-def write_data_page(com, page_num, page1, page2):
+def write_data_page(com, page_num: int, page1, page2):
     """ This is the v1.0 routine that writes data pages in the legacy format with 64
     byte pages with no high bytes.  Newer bootloaders (1.1+) write pages with high
     bytes (which are ignored) to make the format identical to program pages """
@@ -290,7 +290,7 @@ def write_data_page(com, page_num, page1, page2):
     com.write(com, cmd)
 
 
-def write_data(com, min_data, max_data, data):
+def write_data(com, min_data: int, max_data: int, data):
     for i in range(min_data, max_data, 2):
         page_num = i - min_data
         write_data_page(com, page_num, data[i], data[i + 1])

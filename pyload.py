@@ -1,7 +1,7 @@
 #! /usr/bin/python3
 
 # -------------------------------------------------------------------------------
-#    $Id: pyload.py 798 2018-01-21 02:39:28Z rnee $
+#    $Id: pyload.py 814 2018-02-16 02:44:24Z rnee $
 #
 # Bootloader with automatic reset control.
 #
@@ -133,9 +133,11 @@
 #
 # -------------------------------------------------------------------------------
 
+import os
 import sys
 import time
 import argparse
+import serial
 
 import comm
 import term
@@ -152,7 +154,7 @@ DEFAULT_PORT = '/dev/ttyUSB0'
 # Communications settings
 
 DATA = 8
-TOMS = 1000
+TOUT = 1
 
 # -------------------------------------------------------------------------------
 
@@ -166,21 +168,32 @@ parser.add_argument('-r', '--read', action='store_true', help='Read target and s
 parser.add_argument('-x', '--reset', action='store_true', help='Reset target and exit')
 parser.add_argument('-t', '--term', action='store_true', help='Start terminal mode after processing')
 parser.add_argument('-l', '--log', nargs='?', const='bload.log', default=None, help='Log all I/O to file')
-parser.add_argument('--version', action='version', version='$Id: pyload.py 798 2018-01-21 02:39:28Z rnee $')
+parser.add_argument('--version', action='version', version='$Id: pyload.py 814 2018-02-16 02:44:24Z rnee $')
 
 parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
 
 args = parser.parse_args()
 
+if args.log:
+    if os.path.exists(args.log):
+        os.unlink(args.log)
+    logf = open(args.log, 'a')
+else:
+    logf = None
+
 # Check for commands that don't require a filename
 if args.filename is None:
     if args.reset:
-        com = comm.Comm(args.port, args.baud, DATA, TOMS/1000.0, args.log)
+        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
+        com = comm.Comm(ser, logf)
+
         com.pulse_dtr(250)
         if args.term:
             term.terminal(com)
     elif args.term:
-        com = comm.Comm(args.port, args.baud, DATA, TOMS/1000.0, args.log)
+        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
+        com = comm.Comm(ser, logf)
+
         com.pulse_dtr(250)
         term.terminal(com)
     else:
@@ -195,6 +208,7 @@ if not args.read:
         file_firmware = hexfile.Hexfile()
         file_firmware.read(fp)
         if not args.quiet:
+            print(args.filename)
             print(file_firmware.display())
 
 if args.cdef:
@@ -204,16 +218,19 @@ if args.cdef:
 
     sys.exit()
 
-
 # Init comm (holds target in reset)
 print('Initializing {} {} ...'.format(args.port, args.baud))
-com = comm.Comm(args.port, args.baud, DATA, TOMS/1000.0, args.log)
+ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
+
+# create wrapper
+com = comm.Comm(ser, logf)
 
 # Bring target out of reset
 print('Reset ...')
 time.sleep(0.050)
 com.dtr_active(False)
 time.sleep(0.050)
+com.flush()
 com.pulse_break(0.200)
 
 # Look for prompt but skip null character noise
@@ -227,6 +244,8 @@ if count == 0 or value != b'K':
 
     print('[{}, {}] Could not find boot loader on {}\n'.format(count, value, args.port))
     sys.exit()
+
+print('Connected...')
 
 # Get info about the bootloader
 (boot_version, boot_pagesize, boot_start, boot_end, data_start, data_end) = bload.get_info(com)
@@ -271,7 +290,7 @@ else:
     device_rev = 1
     config_words = ""
 
-print("\nBootloader Version: %02X  Page Size: 0x%02X  Bootloader Region: 0x%04X - 0x%04X"\
+print("\nBootloader Version: %02X  Page Size: 0x%02X  Bootloader Region: 0x%04X - 0x%04X"
       "  EEPROM Data Region: 0x%04x - 0x%04x\n" %
       (boot_version, boot_pagesize, boot_start, boot_end, data_start, data_end))
 
@@ -291,19 +310,24 @@ if min_data != data_start or max_data != data_end:
     print("data_start=", data_start, 'data_end=', data_end)
     sys.exit()
 
+prog_list = list(range(0, max_addr + 1))
+user_list = list(range(min_user, max_user + 1))
+boot_list = list(range(boot_start, boot_end + 1))
+data_list = list(range(min_data, max_data + 1))
+
 # Read existing firmware
 if args.fast:
     sys.stderr.write("Reading Bootloader  ")
-    chip_firmware = bload.read_program(com, [0] + list(range(boot_start, boot_end + 1)))
+    chip_firmware = bload.read_program(com, [0] + boot_list)
     print()
 
 elif boot_version > 0x11:
     sys.stderr.write("Reading Firmware    ")
-    prog_list = bload.read_program(com, range(0, max_addr + 1))
-    data_list = bload.read_data(com, range(min_data, max_data + 1))
+    prog_pages = bload.read_program(com, prog_list)
+    data_pages = bload.read_data(com, data_list)
     print()
 
-    chip_firmware = prog_list + data_list
+    chip_firmware = prog_pages + data_pages
 
     # blank out stuff that shouldn't get written including the undefined words
     conf_str = hexfile.bytes_to_hex(config)
@@ -321,11 +345,11 @@ elif boot_version > 0x11:
 
 elif boot_version > 0x10:
     print("Reading Firwmare    ", end='')
-    prog_list = bload.read_program(com, range(0, max_addr + 1))
-    data_list = bload.read_data(com, range(min_data, max_data + 1))
+    prog_pages = bload.read_program(com, prog_list)
+    data_pages = bload.read_data(com, data_list)
     print()
 
-    chip_firmware = prog_list + data_list
+    chip_firmware = prog_pages + data_pages
 
     if not args.quiet:
         print(chip_firmware.display())
@@ -344,7 +368,8 @@ else:
             chip_firmware.write(fp)
 
     # Compare protected regions to ensure they are compatible
-    errors = chip_firmware.compare(file_firmware, range(boot_start, boot_end + 1))
+    # noinspection PyUnboundLocalVariable
+    errors = chip_firmware.compare(file_firmware, boot_list)
     if errors:
         # Reset the target
         com.pulse_dtr(250)
@@ -366,42 +391,54 @@ else:
 
     # Compute write list based on hex file and existing firmware if available.
     # Compute check list for verify step.  Either all pages or abbreviated list
-    write_list = []
-    check_list = []
+    prog_write_list = []
+    data_write_list = []
+    prog_check_list = []
+    data_check_list = []
     if args.fast:
         # we don't have the existing firmware to compare to so write all pages
         # in the input file and erase all others
-        write_list = range(min_user, max_user + 1)
+        prog_write_list = user_list
+        data_write_list = data_list
 
-        for page_num in range(min_user, max_user + 1):
+        for page_num in user_list:
             if file_firmware[page_num]:
-                check_list.append(page_num)
+                prog_check_list.append(page_num)
+        for page_num in data_list:
+            if file_firmware[page_num]:
+                data_check_list.append(page_num)
     else:
-        # don't write pages if input and existing are already blank
-        for page_num in range(min_user, max_user + 1):
+        # don't write pages if input and existing are both already blank
+        for page_num in user_list:
             if file_firmware[page_num] or chip_firmware[page_num]:
-                write_list.append(page_num)
-        check_list = range(min_user, max_user + 1)
+                prog_write_list.append(page_num)
+        for page_num in data_list:
+            if file_firmware[page_num] or chip_firmware[page_num]:
+                data_write_list.append(page_num)
 
-    # Write the new firmware.  Use a loop incase multiple attempts are necessary
+        prog_check_list = user_list
+        data_check_list = data_list
+
+    # Write the new firmware.  Use a loop in case multiple attempts are necessary
     while True:
         sys.stderr.write("Writing Firmware    ")
-        bload.write_pages(com, b'W', file_firmware, write_list)
-        if args.fast or len(file_firmware) >= min_data:
-            if boot_version > 0x10:
-                bload.write_pages(com, b'D', file_firmware, range(min_data, max_data + 1))
-            else:
-                print("Should be writing data...")
+        bload.write_pages(com, b'W', file_firmware, prog_write_list)
+        if boot_version > 0x10:
+            bload.write_pages(com, b'D', file_firmware, data_write_list)
+        else:
+            print("Should be writing data...")
 
         print()
 
         # Verify what was just written
         if not args.fast:
             sys.stderr.write("Checking Firmware    ")
+            
+            prog_pages = bload.read_program(com, prog_check_list)
+            data_pages = bload.read_data(com, data_check_list)
 
-            prog_list = bload.read_program(com, check_list)
-            data_list = bload.read_data(com, range(min_data, max_data + 1))
-            check_firmware = prog_list + data_list
+            check_firmware = prog_pages + data_pages
+            check_list = prog_check_list + data_check_list
 
             errors = check_firmware.compare(file_firmware, check_list)
             if errors:

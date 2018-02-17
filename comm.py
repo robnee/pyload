@@ -6,30 +6,8 @@
 #
 # -------------------------------------------------------------------------------
 
-# import serial
 import time
 import os
-
-
-class serial:
-    def __init__(self, port: str):
-        self.port = port
-        self.in_waiting = 0
-
-    def read(self, num_bytes: int):
-        return b'\x45' * num_bytes
-
-    def readline(self):
-        return '123\n'
-
-    def send_break(duration: int):
-        time.sleep(duration)
-
-    def write(self, data):
-        pass
-
-    def close(self):
-        pass
 
 
 class Comm:
