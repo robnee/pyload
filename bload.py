@@ -1,8 +1,8 @@
 #! /usr/bin/python3
 
-# -------------------------------------------------------------------------------
-#    $Id: bload.py 814 2018-02-16 02:44:24Z rnee $
-#
+"""
+$Id: bload.py 817 2018-02-20 03:33:56Z rnee $
+"""
 
 import sys
 import struct
@@ -62,6 +62,7 @@ def wait_k(com) -> bytes:
 
 
 def get_info(com):
+    """request info record from bootloader"""
     cmd = b'I' + b'\0'
 
     com.write(cmd)
@@ -96,6 +97,7 @@ def get_info(com):
 
 
 def erase_program_page(com, page_num: int):
+    """Erase specified program page"""
     cmd = get_command(b'E', page_num)
     com.write(cmd)
 
@@ -113,6 +115,7 @@ def write_page(com, cmd_code: bytes, page_num: int, page_bytes):
 
 
 def write_pages(com, cmd: bytes, pages: hexfile.Hexfile, page_nums):
+    """write specified list of pages"""
     for page_num in page_nums:
         page = pages[page_num] if page_num < len(pages) else None
 
@@ -141,6 +144,7 @@ def write_pages(com, cmd: bytes, pages: hexfile.Hexfile, page_nums):
 
 
 def read_page(com, cmd: bytes, page_num: int) -> bytes:
+    """read specified page"""
     # allow 5 read tries
     for retry in range(5):
         com.write(cmd)
@@ -172,6 +176,7 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
 
 
 def read_config(com) -> bytes:
+    """read config data"""
     page_num = 0
 
     # Read all pages and create a list
@@ -187,6 +192,7 @@ def read_config(com) -> bytes:
 
 
 def show_progress(cmd: bytes):
+    """display a progress tick"""
     if cmd in (b'C', b'R', b'W'):
         sys.stderr.write('.')
     elif cmd == b'E':
@@ -291,6 +297,7 @@ def write_data_page(com, page_num: int, page1, page2):
 
 
 def write_data(com, min_data: int, max_data: int, data):
+    """write data V1.0 protocol"""
     for i in range(min_data, max_data, 2):
         page_num = i - min_data
         write_data_page(com, page_num, data[i], data[i + 1])

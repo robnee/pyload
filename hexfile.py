@@ -11,8 +11,6 @@ import itertools
 
 PAGESIZE = 64
 
-# -------------------------------------------------------------------------------
-
 
 def words(data):
     """return words made up of 2 bytes
@@ -217,15 +215,18 @@ class Hexfile:
         self.page_list[page_num] = Page(page)
 
     def __getitem__(self, key):
-        return self.page_list[key]
+        try:
+            return self.page_list[key]
+        except IndexError:
+            return None
 
     def __len__(self):
         return len(self.page_list)
 
     def __add__(self, other):
         new_list = []
-        for t, s in itertools.zip_longest(self.page_list, other.page_list):
-            new_list.append(s or t)
+        for s, t in itertools.zip_longest(self.page_list, other.page_list):
+            new_list.append(t or s)
 
         return Hexfile(new_list)
 

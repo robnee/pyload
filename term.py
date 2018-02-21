@@ -1,47 +1,14 @@
-# -------------------------------------------------------------------------------
-#  Simple Terminal
-# -------------------------------------------------------------------------------
+"""Simple Terminal
+
+$Id: term.py 817 2018-02-20 03:33:56Z rnee $
+"""
 
 import sys
 import termios
 
-# -------------------------------------------------------------------------------
-# Read key in non-canonical mode (don't wait for newline)
-
-"""
-sub readkey
-{
-    my $term = POSIX::Termios->new();
-
-    $term->getattr (fileno (STDIN));
-
-    # Save current settings
-    my $oterm = $term->getlflag();
-    my $vtime = $term->getcc(VTIME);
-    my $vmin = $term->getcc(VMIN);
-
-    # non-canonical, wait VTIME=0.1 seconds, no min characters
-    # VTIME=0 will end up using 100% cpu
-    $term->setlflag ($oterm & ~ICANON);
-    $term->setcc(VTIME, 1);
-    $term->setcc(VMIN, 0);
-    $term->setattr(fileno (STDIN), TCSANOW);
-
-    my $key = '';
-    sysread(STDIN, $key, 1);
-
-    $term->setlflag($oterm);
-    $term->setcc(VTIME, $vtime);
-    $term->setcc(VMIN, $vmin);
-    $term->setattr(fileno (STDIN), TCSANOW);
-
-    return $key;
-}
-
-"""
-
 
 def readkey():
+    """read a key without echo or buffering"""
     stdin = sys.stdin
     fd = stdin.fileno()
 
