@@ -1,137 +1,136 @@
 #! /usr/bin/python3
 
-# -------------------------------------------------------------------------------
-#    $Id: pyload.py 814 2018-02-16 02:44:24Z rnee $
-#
-# Bootloader with automatic reset control.
-#
-# Uses DTR line to control MCLR pin on PIC.  This resets the PIC at which time it
-# waits 250us for a '!' character as an attention signal.  Once received the PIC
-# enters its bootloader mode and accepts program and data memory read and write
-# commands.
-#
-# bload.pl [-p=port] [-b=rate] [-q] [-f] [-w] [-t] <filename.hex>
-#
-# -p  followed by =port.  default is /dev/ttyS0
-# -b  Followed by =rate.  default is 9600
-# -q  Quiet mode.  Don't dump hex files
-# -f  Fast mode.  Do minimal verification
-# -w  Write Only mode.  Fastest but does no verification
-# -t  Start terminal on exit to capture debug output
-#
-# V0.1 02/01/2007
-#
-# Working version
-#
-# V0.2 02/07/2007
-#
-# Added -t, -q and -f options
-#
-# V0.3 02/11/2007
-#
-# Use break signal to start bootloader
-#
-# V0.4 02/16/2007
-#
-# Added write-only mode to suppress verify steps all together
-#
-# V0.5 02/19/2007
-#
-# Allow writing page zero just before reset.  No longer part of safe region
-#
-# V0.6 02/22/2007
-#
-# If -f is specified do not write data pages unless at least one is present
-#
-# V0.7 03/05/2007
-#
-# Add input to terminal mode
-#
-# V0.8 03/05/2007
-#
-# Allow -t to be used with out firmware upload
-#
-# V1.0 03/06/2007
-#
-# Add non-blocking non-canonical input to terminal mode
-#
-# V1.23 03/13/2007
-#
-# Added baud rate option -b=rate
-#
-# V1.24 05/26/2009
-#
-# Added port option
-#
-# V1.25 05/29/2009
-#
-# Converted from DeviceSerialPort to native Fcntl and POSIX serial I/O
-#
-# V1.26 06/08/2009
-#
-# Ensure IXON and IXOFF are turned off
-#
-# V1.27 06/08/2009
-#
-# Fix retries on page read function and dump short page bytes to help debugging
-#
-# V1.28 04/02/2013
-#
-# Ensure ICRNL is turned off.  This was converting \r to \n when reading firmware
-# When there is a verify error display the file and chip pages that differ
-#
-# V1.28 04/11/2013
-#
-# Add -r option which only resets target
-#
-# V1.31 11/20/2015
-#
-# Added support for I info command to set region sizes from info from chip
-# Added support for extended pages in hex file reader
-# Added comm logging
-#
-# V1.32 11/25/2015
-#
-# Added support for writing hex files with extended addresses
-# Fix bug in reading extended addresses
-# Add support for reading config words and saving them to hex file
-# Add more info including chip names to the info display
-#
-# V1.33 11/26/2015
-#
-# Added support for the 1.2 protocol which uses the same data record layout for data
-# and program pages
-# fix bug in writing hex extended address records
-# Add support for reading and writing eeprom data
-# Tweak config data words so firmware read from chip looks more like a assembler file
-#
-# V1.34 11/27/2015
-#
-# Added logging of low level serial port routines like comm_pulse_break
-# Added a separate bload_data_write that still uses the old protocol format
-# Dump display has addresses and to be easier to read
-# Add basis for parameters for various chips
-# Added ability to support the v10 and v11 bootloaders
-#
-# 12/20/2015
-#
-# Added comm_flush and comm_avail routines
-# added ^B to send break signal in terminal mode
-#
-# 12/30/2015
-#
-# Fix write_pages call when writing page zero
-#
-# 1/10/2016
-#
-# Use comm routines for all I/O instead of low-level routines
-# Change default to 38400 baud
-#
-# 1/30/2016
-#
-# Add -d options to convert a hex file to C definitions
-#
-# -------------------------------------------------------------------------------
+"""
+Bootloader with automatic reset control.
+
+$Id: pyload.py 817 2018-02-20 03:33:56Z rnee $
+
+Uses DTR line to control MCLR pin on PIC.  This resets the PIC at which time it
+waits 250us for a '!' character as an attention signal.  Once received the PIC
+enters its bootloader mode and accepts program and data memory read and write
+commands.
+
+bload.pl [-p=port] [-b=rate] [-q] [-f] [-w] [-t] <filename.hex>
+
+-p  followed by =port.  default is /dev/ttyS0
+-b  Followed by =rate.  default is 9600
+-q  Quiet mode.  Don't dump hex files
+-f  Fast mode.  Do minimal verification
+-w  Write Only mode.  Fastest but does no verification
+-t  Start terminal on exit to capture debug output
+
+V0.1 02/01/2007
+
+Working version
+
+V0.2 02/07/2007
+
+Added -t, -q and -f options
+
+V0.3 02/11/2007
+
+Use break signal to start bootloader
+
+V0.4 02/16/2007
+
+Added write-only mode to suppress verify steps all together
+
+V0.5 02/19/2007
+
+Allow writing page zero just before reset.  No longer part of safe region
+
+V0.6 02/22/2007
+
+If -f is specified do not write data pages unless at least one is present
+
+V0.7 03/05/2007
+
+Add input to terminal mode
+
+V0.8 03/05/2007
+
+Allow -t to be used with out firmware upload
+
+V1.0 03/06/2007
+
+Add non-blocking non-canonical input to terminal mode
+
+V1.23 03/13/2007
+
+Added baud rate option -b=rate
+
+V1.24 05/26/2009
+
+Added port option
+
+V1.25 05/29/2009
+
+Converted from DeviceSerialPort to native Fcntl and POSIX serial I/O
+
+V1.26 06/08/2009
+
+Ensure IXON and IXOFF are turned off
+
+V1.27 06/08/2009
+
+Fix retries on page read function and dump short page bytes to help debugging
+
+V1.28 04/02/2013
+
+Ensure ICRNL is turned off.  This was converting \r to \n when reading firmware
+When there is a verify error display the file and chip pages that differ
+
+V1.28 04/11/2013
+
+Add -r option which only resets target
+
+V1.31 11/20/2015
+
+Added support for I info command to set region sizes from info from chip
+Added support for extended pages in hex file reader
+Added comm logging
+
+V1.32 11/25/2015
+
+Added support for writing hex files with extended addresses
+Fix bug in reading extended addresses
+Add support for reading config words and saving them to hex file
+Add more info including chip names to the info display
+
+V1.33 11/26/2015
+
+Added support for the 1.2 protocol which uses the same data record layout for data
+and program pages
+fix bug in writing hex extended address records
+Add support for reading and writing eeprom data
+Tweak config data words so firmware read from chip looks more like a assembler file
+
+V1.34 11/27/2015
+
+Added logging of low level serial port routines like comm_pulse_break
+Added a separate bload_data_write that still uses the old protocol format
+Dump display has addresses and to be easier to read
+Add basis for parameters for various chips
+Added ability to support the v10 and v11 bootloaders
+
+12/20/2015
+
+Added comm_flush and comm_avail routines
+added ^B to send break signal in terminal mode
+
+12/30/2015
+
+Fix write_pages call when writing page zero
+
+1/10/2016
+
+Use comm routines for all I/O instead of low-level routines
+Change default to 38400 baud
+
+1/30/2016
+
+Add -d options to convert a hex file to C definitions
+"""
 
 import os
 import sys
@@ -168,7 +167,7 @@ parser.add_argument('-r', '--read', action='store_true', help='Read target and s
 parser.add_argument('-x', '--reset', action='store_true', help='Reset target and exit')
 parser.add_argument('-t', '--term', action='store_true', help='Start terminal mode after processing')
 parser.add_argument('-l', '--log', nargs='?', const='bload.log', default=None, help='Log all I/O to file')
-parser.add_argument('--version', action='version', version='$Id: pyload.py 814 2018-02-16 02:44:24Z rnee $')
+parser.add_argument('--version', action='version', version='$Id: pyload.py 817 2018-02-20 03:33:56Z rnee $')
 
 parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
 

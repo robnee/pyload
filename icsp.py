@@ -1,9 +1,3 @@
-# -------------------------------------------------------------------------------
-
-import sys
-import hexfile
-import comm
-
 """
 The Host controller understands the following commands
 
@@ -43,10 +37,16 @@ C   - DAT low
 D   - DAT high
 
 """
+
+import sys
+import intelhex as hexfile
+import comm
+
 # -------------------------------------------------------------------------------
 # Processor memory layout
 
-PAGESIZE = 64
+PAGELEN = 32
+PAGEBYTES = PAGELEN * 2
 MID = b'\x00'
 ENH = b'\x01'
 FAMILY_NAMES = {MID: 'Midrange', ENH: 'Enhanced Midrange'}
@@ -55,6 +55,7 @@ FAMILY_NAMES = {MID: 'Midrange', ENH: 'Enhanced Midrange'}
 
 
 def show_progress(cmd: bytes):
+    """Display a progress tick unbuffered"""
     if cmd in (b'G', b'D'):
         sys.stderr.write('.')
     elif cmd == b'E':
@@ -68,6 +69,7 @@ def show_progress(cmd: bytes):
 
 
 def write_config(com: comm.Comm, firmware_list, device):
+    """Write config page to target"""
     conf_page_num = device['conf_page']
     conf_page_len = device['conf_len']
 
@@ -86,6 +88,7 @@ def write_config(com: comm.Comm, firmware_list, device):
 
 
 def read_config(com: comm.Comm, device) -> bytes:
+    """Read config page from target"""
     conf_page_len = device['conf_len']
 
     load_config(com)
@@ -97,7 +100,7 @@ def read_config(com: comm.Comm, device) -> bytes:
 
     if count != conf_page_len * 2:
         print(f"Short config read [{count} {conf_page_len}]")
-        print("[", hexfile.bytes_to_hex(data), "]")
+        print("[", data, "]")
 
     return data
 
@@ -107,7 +110,7 @@ def write_page(com: comm.Comm, device, cmd_code: bytes, data: bytes, num_latches
 
     # Check for empty page and skip
     if data is None:
-        jump(com, PAGESIZE // 2)
+        jump(com, PAGELEN)
         show_progress(b'S')
         return
 
@@ -137,6 +140,7 @@ def write_page(com: comm.Comm, device, cmd_code: bytes, data: bytes, num_latches
 
 
 def write_pages(com: comm.Comm, device, cmd_code: bytes, page_list, firmware_list):
+    """write pages specified in page_list"""
     for page_num in page_list:
         page = firmware_list[page_num]
         data = bytes(page) if page else None
@@ -146,24 +150,25 @@ def write_pages(com: comm.Comm, device, cmd_code: bytes, page_list, firmware_lis
 
 
 def write_program_pages(com: comm.Comm, firmware_list, device):
+    """write program pages"""
     page_list = range(0, device['max_page'] + 1)
     write_pages(com, device, b'L', page_list, firmware_list)
 
 
 def write_data_pages(com: comm.Comm, firmware_list, device):
+    """write data pages"""
     page_list = range(device['min_data'], device['max_data'] + 1)
     write_pages(com, device, b'D', page_list, firmware_list)
 
 
 def read_page(com: comm.Comm, cmd_code: bytes, req_count: int) -> bytes:
-    # read program memory
+    """read next program or data page"""
     cmd = cmd_code + req_count.to_bytes(2, 'little')
     com.write(cmd)
 
     count, data = com.read(req_count * 2)
     if count != req_count * 2:
-        raise RuntimeError("Error [c={}|d={} {}".format(count, data,
-                           hexfile.bytes_to_hex(data)))
+        raise RuntimeError(f"Error [c={count}|d={data}")
 
     prompt = wait_k(com)
     if prompt != b'K':
@@ -178,12 +183,12 @@ def read_pages(com: comm.Comm, cmd_code: bytes, page_nums):
     page_list = []
 
     for page_num in page_nums:
-        data = read_page(com, cmd_code, PAGESIZE // 2)
+        data = read_page(com, cmd_code, PAGELEN)
 
         count = len(data)
-        if count != PAGESIZE:
+        if count != PAGEBYTES:
             print(f"Short page num {page_num} [{count}]")
-            print("[", hexfile.bytes_to_hex(data), "]")
+            print("[", data, "]")
 
         show_progress(cmd_code)
 
@@ -193,6 +198,7 @@ def read_pages(com: comm.Comm, cmd_code: bytes, page_nums):
 
 
 def read_program(com: comm.Comm, device) -> hexfile.Hexfile:
+    """read all program pages"""
     page_nums = range(0, device['max_page'] + 1)
     page_list = read_pages(com, b'F', page_nums)
 
@@ -204,11 +210,9 @@ def read_program(com: comm.Comm, device) -> hexfile.Hexfile:
             page = hexfile.Page(data)
 
             # Remove NULL words
-            for offset in range(0, len(page), 2):
-                word = page[offset: offset + 2]
-                if word == ['FF', '3F']:
+            for offset in range(0, len(page)):
+                if page[offset] == 0x3FFF:
                     page[offset] = None
-                    page[offset + 1] = None
 
             if any(page):
                 pages[page_num] = page
@@ -217,6 +221,7 @@ def read_program(com: comm.Comm, device) -> hexfile.Hexfile:
 
 
 def read_data(com: comm.Comm, device):
+    """read all data pages"""
     page_nums = range(device['min_data'], device['max_data'] + 1)
     data_list = read_pages(com, b'G', page_nums)
 
@@ -226,11 +231,9 @@ def read_data(com: comm.Comm, device):
         if data:
             page = hexfile.Page(data)
 
-            for offset in range(0, len(page), 2):
-                word = [page[offset], '00']
-                if word == ['FF', '00']:
+            for offset in range(0, len(page)):
+                if page[offset] == 0x00FF:
                     page[offset] = None
-                    page[offset + 1] = None
 
             if any(page):
                 pages[page_num] = page
@@ -316,10 +319,12 @@ def load_data(com: comm.Comm, data):
 
 
 def load_program(com: comm.Comm, data):
+    """load program memory"""
     send_command(com, b'L', data)
 
 
 def load_program_inc(com: comm.Comm, data):
+    """"load program memory and increment program counter"""
     send_command(com, b'M', data)
 
 
@@ -335,22 +340,22 @@ def inc(com: comm.Comm):
 
 
 def jump(com: comm.Comm, count):
-    # jump address
+    """jump program counter forward indicated number of words"""
     send_command(com, b'J' + count.to_bytes(2, 'little'))
 
 
 def reset_address(com: comm.Comm):
-    # reset address to zero
+    """reset address to zero"""
     send_command(com, b'X')
 
 
 def hard_reset(com: comm.Comm):
-    # reset
+    """hard reset"""
     send_command(com, b'Z')
 
 
 def reset(com: comm.Comm, device):
-    """reset"""
+    """soft reset"""
 
     if device['family'] == 'mid':
         # hard reset followed by a restart
