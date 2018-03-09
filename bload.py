@@ -1,7 +1,7 @@
 #! /usr/bin/python3
 
 """
-$Id: bload.py 817 2018-02-20 03:33:56Z rnee $
+$Id: bload.py 838 2018-03-04 00:54:29Z rnee $
 """
 
 import sys
@@ -165,7 +165,7 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
         # Check checksum
         count, checksum = com.read(1)
         if ord(checksum) != calc_checksum(data):
-            print('checksum:', ord(checksum), 'bl:', calc_checksum(data))
+            print('checksum:', ord(checksum), 'computed:', calc_checksum(data))
             print('\nChecksum error reading %s page 0x%03x\n' % (cmd, page_num))
             continue
 
@@ -194,15 +194,15 @@ def read_config(com) -> bytes:
 def show_progress(cmd: bytes):
     """display a progress tick"""
     if cmd in (b'C', b'R', b'W'):
-        sys.stderr.write('.')
+        sys.stdout.write('.')
     elif cmd == b'E':
-        sys.stderr.write('x')
+        sys.stdout.write('x')
     elif cmd == b'S':
-        sys.stderr.write('>')
+        sys.stdout.write('>')
     elif cmd in (b'D', b'F'):
-        sys.stderr.write(':')
+        sys.stdout.write(':')
 
-    sys.stderr.flush()
+    sys.stdout.flush()
 
 
 def read_pages(com, cmd_code: bytes, page_nums):

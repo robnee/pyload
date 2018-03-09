@@ -1,6 +1,6 @@
 """Serial port comm routines
 
-$Id: comm.py 817 2018-02-20 03:33:56Z rnee $
+$Id: comm.py 845 2018-03-09 01:26:51Z rnee $
 """
 
 import time
@@ -11,14 +11,16 @@ class Comm:
     def __init__(self, ser, logf=None):
         self.ser = ser
         self.logf = logf
-
-        # print('timeout', ser.timeout)
-        # print('xonxoff', ser.xonxoff)
-        # print('rtscts', ser.rtscts)
-        # print('dsrdtr', ser.dsrdtr)
+        self.time0 = time.time()
 
         self.read_count = 0
         self.write_count = 0
+
+        # log initial state of lines
+        self._log(b'\x01' if ser.dtr else b'\x00', "DTR")
+        self._log(b'\x01' if ser.dsr else b'\x00', "DSR")
+        self._log(b'\x01' if ser.cts else b'\x00', "CTS")
+        self._log(b'\x01' if ser.rts else b'\x00', "RTS")
 
     def read(self, request=None):
         """ read a requested number of bytes.  If request is missing or zero read available """
@@ -32,6 +34,8 @@ class Comm:
 
         if total > 0:
             self._log(data, "READ")
+        else:
+            self._log(data, "TIME")
 
         return total, data
 
@@ -76,13 +80,22 @@ class Comm:
         self.ser.dtr = state
         self._log(b'high' if state else b'low', "ADTR")
 
-    def pulse_dtr(self, duration):
-        """pulse DTR line"""
+    def pulse_dtr(self, duration: float=0.001):
+        """pulse DTR line duration in seconds"""
         self.ser.dtr = True
         time.sleep(duration / 1000.0)
         self.ser.dtr = False
 
         self._log(bytes("{0}".format(duration), 'utf-8'), "PDTR")
+
+    def pulse_rts(self, duration: float=0.001):
+        """pulse DTR line duration in seconds.  Autodetects polarity"""
+        init_state = self.ser.rts
+        self.ser.rts = not init_state
+        time.sleep(duration)
+        self.ser.rts = init_state
+
+        self._log(bytes("{0}".format(duration), 'utf-8'), "PRTS")
 
     def pulse_break(self, duration):
         """send a break"""
@@ -90,16 +103,23 @@ class Comm:
 
         self._log(bytes("{0}".format(duration), 'utf-8'), "PBRK")
 
-    def _log(self, data, desc):
+    def _log(self, data: bytes, desc: str):
         """write a log string"""
         if self.logf:
-            self.logf.write("%8.3f %s %3d : " % (0, desc, len(data)))
-            for c in data:
+            self.logf.write("%8.3f %4s %3d : " %
+                            (time.time() - self.time0, desc, len(data)))
+            for n, c in enumerate(data):
                 if ord(' ') <= c <= ord('~'):
                     self.logf.write("%02x[%s] " % (c, chr(c)))
                 else:
-                    self.logf.write("%02x " % c)
+                    self.logf.write("%02x[ ] " % c)
+
+                if (n + 1) % 16 == 0:
+                    self.logf.write("\n                  : ")
 
             self.logf.write("\n")
 
+            avail = self.avail()
+            if avail > 0:
+                self.logf.write("%8.3f INBF %3d\n" % (0, avail))
 

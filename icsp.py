@@ -1,46 +1,62 @@
 """
 The Host controller understands the following commands
 
-Sn	- Start programming.  Hold MCLR on target low and send MCHP signature
-En	- End programming.  Release MCLR on target
-X	- Reset the Address counter to zero
-I	- Increment the Address counter
+Cn  - Send command code
+S	- Start programming.  Hold MCLR on target low and send MCHP signature
+E	- End programming.  Release MCLR on target
 Jnn - Jump the Address counter a given number of locations
-Bn	- Bulk erase program memory.  argument is MID/ENH flag
-An	- Bulk erase data memory.  argument is MID/ENH flag
-Cnn	- Set address to 8000h and Load config word
-Lnn	- Load program word at current address
-Mnn	- Load program word at current address and increment program counter
-Pn	- Program commit
-R	- Read program memory
+R	- Read Word
 Fnn	- Fetch program memory words
 Gnn	- Get data memory words
-Dn	- Load data byte for programming
-Tn  - Low-level API to manipulate control lines
+Ln  - Low-level API to manipulate control lines based on subcommand n
+Q   - Query line status
 V	- ICSP version
-K	- NOP.  Just returns the K prompt
+K	- Sync command.  Illicit a K in response
+Wnn - Send Word
+Z   - Release all programmer lines
 
-Low level API (command T)
+Low level API (command L)
 
-R   - Release all control lines to high impedance
-U   - VCCP low
-V   - VCCP high
-L   - MCLR low
-M   - MCLR high
-F   - CLK output
-G   - CLK low
-H   - CLK high
-P   - CLK pulse
-A   - DAT output
-B   - DAT input
-C   - DAT low
-D   - DAT high
+A
+B
+C
+D
+
+E - MCLR1 output
+F - MCLR1 low
+G - MCLR1 high
+H - MCLR2 output
+I - MCLR2 low
+J - MCLR2 high
+
+K - Reserved
+
+L - CLK output
+M - CLK low
+N - CLK high
+O - CLK Pulse
+
+P - DAT input
+Q - DAT output
+R - DAT low
+S - DAT high
+
+T - VON low
+U - VON high
+
+V
+W
+X
+Y
+Z
 
 """
 
 import sys
+import time
 import intelhex as hexfile
 import comm
+from typing import Iterable
 
 # -------------------------------------------------------------------------------
 # Processor memory layout
@@ -51,21 +67,35 @@ MID = b'\x00'
 ENH = b'\x01'
 FAMILY_NAMES = {MID: 'Midrange', ENH: 'Enhanced Midrange'}
 
+CMD_LOAD_CONFIG = b'C\x00'
+CMD_LOAD_PGM = b'C\x02'
+CMD_LOAD_DATA = b'C\x03'
+CMD_READ_PGM = b'C\x04'
+CMD_READ_DATA = b'C\x05'
+CMD_INC = b'C\x06'
+CMD_PROGRAM_INT = b'C\x08'
+CMD_PROGRAM_EXT = b'C\x18'
+CMD_PROGRAM_END = b'C\x0A'
+CMD_ERASE_PGM = b'C\x09'
+CMD_ERASE_DATA = b'C\x0B'
+CMD_RESET_ADDRESS = b'C\x16'
+
+
 """ICSP high-level API"""
 
 
 def show_progress(cmd: bytes):
     """Display a progress tick unbuffered"""
     if cmd in (b'G', b'D'):
-        sys.stderr.write('.')
+        sys.stdout.write('.')
     elif cmd == b'E':
-        sys.stderr.write('x')
+        sys.stdout.write('x')
     elif cmd == b'S':
-        sys.stderr.write('>')
+        sys.stdout.write('>')
     elif cmd in (b'L', b'F'):
-        sys.stderr.write(':')
+        sys.stdout.write(':')
         
-    sys.stderr.flush()
+    sys.stdout.flush()
 
 
 def write_config(com: comm.Comm, firmware_list, device):
@@ -126,22 +156,26 @@ def write_page(com: comm.Comm, device, cmd_code: bytes, data: bytes, num_latches
         # Issue a program command at the end of the set of data latches or if
         # this is the last word on the page
         if cmd_code == b'D':
-            load_data(com, word)
-            program(com, device)
-            inc(com)
+            send_command(com, CMD_LOAD_DATA)
+            send_command(com, b'W', word)
+            program(com, cmd_code)
+            send_command(com, CMD_INC)
         elif word_count % num_latches == 0 or word_count == len(data):
-            load_program(com, word)
-            program(com, device)
-            inc(com)
+            send_command(com, CMD_LOAD_PGM)
+            send_command(com, b'W', word)
+            program(com, cmd_code)
+            send_command(com, CMD_INC)
         else:
-            load_program_inc(com, word)
+            send_command(com, CMD_LOAD_PGM)
+            send_command(com, b'W', word)
+            send_command(com, CMD_INC)
 
         word_count += 1
 
 
-def write_pages(com: comm.Comm, device, cmd_code: bytes, page_list, firmware_list):
+def write_pages(com: comm.Comm, device, cmd_code: bytes, page_nums: Iterable[int], firmware_list):
     """write pages specified in page_list"""
-    for page_num in page_list:
+    for page_num in page_nums:
         page = firmware_list[page_num]
         data = bytes(page) if page else None
         write_page(com, device, cmd_code, data)
@@ -170,14 +204,10 @@ def read_page(com: comm.Comm, cmd_code: bytes, req_count: int) -> bytes:
     if count != req_count * 2:
         raise RuntimeError(f"Error [c={count}|d={data}")
 
-    prompt = wait_k(com)
-    if prompt != b'K':
-        raise RuntimeError(f'Error [{prompt}] command:{cmd} ICSP')
-
     return data
 
 
-def read_pages(com: comm.Comm, cmd_code: bytes, page_nums):
+def read_pages(com: comm.Comm, cmd_code: bytes, page_nums: Iterable[int]):
     """ read all pages and create a list """
 
     page_list = []
@@ -258,7 +288,7 @@ def wait_k(com):
 
         # Check timeout
         timeout -= 1
-        if count == 0 and timeout == 0:
+        if count == 0 and timeout <= 0:
             break
 
     return data
@@ -266,110 +296,119 @@ def wait_k(com):
 
 def send_command(com: comm.Comm, cmd: bytes, data=None):
     """"package and send command with data"""
-
     if data is None:
         data = b''
 
     com.write(cmd + data)
 
-    prompt = wait_k(com)
-    if prompt != b'K':
-        raise RuntimeError(f'Error expecting prompt [{prompt}] command:{cmd} data:{data} ICSP')
 
-
-def send_start(com: comm.Comm, method):
+def start(com: comm.Comm):
     """reset target and start ICSP"""
-    send_command(com, b'S', method)
+    #send_command(com, b'S')
 
+    release(com)
 
-def send_end(com: comm.Comm, method):
-    """icsp_end"""
-    send_command(com, b'E', method)
+    # icsp_clk_output
+    send_command(com, b'LL')
+    # icsp_clk_low
+    send_command(com, b'LM')
+    # icsp_dat_output
+    send_command(com, b'LQ')
+    # icsp_dat_low
+    send_command(com, b'LR')
+
+    # icsp_mclr2_output
+    send_command(com, b'LH')
+    # icsp_mclr2_high
+    send_command(com, b'LJ')
+    # icsp_von_high
+    send_command(com, b'LU')
 
 
 def get_version(com: comm.Comm):
     """Get Host controller version"""
-
     cmd = b'V'
     com.write(cmd)
 
     ver = com.read_line()
 
-    prompt = wait_k(com)
-    if prompt != b'K':
-        raise RuntimeError(f'Error [{ver} {prompt}] command:{cmd} ICSP')
-
     return ver.decode('utf-8').rstrip()
 
 
-def erase_program(com: comm.Comm, device):
+def get_status(com: comm.Comm):
+    """Get Host controller version"""
+
+    cmd = b'Q'
+    com.write(cmd)
+
+    count, status = com.read(8)
+
+    return status
+
+def sync(com: comm.Comm):
+    """sync commands stream"""
+
+    cmd = b'K'
+    com.write(cmd)
+
+    prompt = wait_k(com)
+    if prompt != b'K':
+        raise RuntimeError(f'Error [{prompt}] command:{cmd} ICSP')
+
+    # There should be no characters waiting at this point
+    avail = com.avail()
+    if avail > 0:
+        raise RuntimeError(f'Sync Error. {avail} bytes still waiting')
+
+
+def erase_data(com: comm.Comm):
+    """erase data memory"""
+    send_command(com, CMD_ERASE_DATA)
+    time.sleep(0.005)
+
+
+def erase_program(com: comm.Comm):
+    """erase program memory"""
+    send_command(com, CMD_ERASE_PGM)
+    time.sleep(0.005)
+
+
+def program(com: comm.Comm, cmd_code: bytes):
+    """
+    if cmd_code != b'C':
+        send_command(com, CMD_PROGRAM_EXT)
+        time.sleep(0.002)
+        send_command(com, CMD_PROGRAM_END)
+    else:
+    """
+    send_command(com, CMD_PROGRAM_INT)
+    time.sleep(0.005)
+    sync(com)
+
+
+def load_config(com: comm.Comm, data=b'\x00\x00'):
     """Switch to config segment and load a word"""
-    method = MID if device['family'] == 'mid' else ENH
-    send_command(com, b'B', method)
-
-
-def load_config(com: comm.Comm):
-    """Switch to config segment and load a word"""
-    send_command(com, b'C\x00\x00')
-
-
-def load_data(com: comm.Comm, data):
-    """load data memory"""
-    send_command(com, b'D', data)
-
-
-def load_program(com: comm.Comm, data):
-    """load program memory"""
-    send_command(com, b'L', data)
-
-
-def load_program_inc(com: comm.Comm, data):
-    """"load program memory and increment program counter"""
-    send_command(com, b'M', data)
-
-
-def program(com: comm.Comm, device):
-    """icsp internally or externally timed write depending on the method"""
-    method = MID if device['family'] == 'mid' else ENH
-    send_command(com, b'P', method)
-
-
-def inc(com: comm.Comm):
-    """increment address"""
-    send_command(com, b'I')
+    #send_command(com, b'C' + data)
+    send_command(com, CMD_LOAD_CONFIG)
+    send_command(com, b'W' + data)
 
 
 def jump(com: comm.Comm, count):
     """jump program counter forward indicated number of words"""
     send_command(com, b'J' + count.to_bytes(2, 'little'))
+    sync(com)
+
+
+def release(com: comm.Comm):
+    """release"""
+    send_command(com, b'Z')
+    sync(com)
 
 
 def reset_address(com: comm.Comm):
-    """reset address to zero"""
-    send_command(com, b'X')
-
-
-def hard_reset(com: comm.Comm):
-    """hard reset"""
-    send_command(com, b'Z')
-
-
-def reset(com: comm.Comm, device):
     """soft reset"""
-
-    if device['family'] == 'mid':
-        # hard reset followed by a restart
-        hard_reset(com)
-        send_start(com, MID)
-    else:
-        # ENH parts have a reset address command
-        reset_address(com)
-
-
-def erase_data(com: comm.Comm, device):
-    """erase data memory"""
-    method = MID if device['family'] == 'mid' else ENH
-    send_command(com, b'A', method)
+    send_command(com, CMD_RESET_ADDRESS)
+    sync(com)
 
 
 def test_low_level(com: comm.Comm, arg: bytes):

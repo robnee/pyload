@@ -1,9 +1,13 @@
 """
 Mock icsp interface for testing.  Implements the serial port protocol that can be wrapped in a Comm object.
 
-Attempting to create a state machine that runs on every call to the serial port read API and reads and writes to and from the input and output queue until the state machine blocks on a serial read for the next icsp command byte.  At that point the inbound request can be satisfied from one of the two queues.
+Attempting to create a state machine that runs on every call to the serial port read API and reads and writes to and
+from the input and output queue until the state machine blocks on a serial read for the next icsp command byte.
+At that point the inbound request can be satisfied from one of the two queues.
 
-How to do that?  Perhaps this is an example of coroutine programming with yield?  That might simplify the handoff in and out of the state machine.  Not sure how to yield out of the state machine without creating a call chain that goes deeper and deeper.
+How to do that?  Perhaps this is an example of coroutine programming with yield?  That might simplify the handoff
+in and out of the state machine.  Not sure how to yield out of the state machine without creating a call chain that
+goes deeper and deeper.
 
 """
 
@@ -13,7 +17,9 @@ import hexfile
 class Port:
     def __init__(self):
         self._dtr = False
-        self.open()
+        self.break_dur = 0
+        self.inq = bytes()
+        self.outq = bytes()
 
     @property
     def in_waiting(self):
@@ -119,8 +125,8 @@ class ICSP:
                 
                 for _ in range(num_words):
                     if self.address == 0x8006:
-                        id = (0b10_0111_000 << 5) + 0b0_0101
-                        self.ser_out(id.to_bytes(2, 'little'))
+                        chip_id = (0b10_0111_000 << 5) + 0b0_0101
+                        self.ser_out(chip_id.to_bytes(2, 'little'))
                     else:
                         word = self.get_word(self.address)
                         self.ser_out(word)

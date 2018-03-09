@@ -122,9 +122,27 @@ DATA = 8
 TOUT = 1
 
 # These can be set to enable mocking the target and setting where output files go
-MOCK = True
+MOCK = False
 TMP = '.'
 # TMP = os.environ['HOME'] + '/Documents/'
+
+
+def read_info(com, programming_method):
+    """read config info"""
+    icsp.load_config(com)
+    icsp.jump(com, 6)
+
+    chip_id = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    cfg1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    cfg2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    cal1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    cal2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+
+    # enhanced and midrange have different id/rev bits
+    device_id = chip_id >> (5 if programming_method == icsp.ENH else 4)
+    device_rev = chip_id & (0x1F if programming_method == icsp.ENH else 0x0F)
+
+    return device_id, device_rev, cfg1, cfg2, cal1, cal2
 
 
 def read_firmware(com, device_param):
@@ -157,14 +175,33 @@ def read_firmware(com, device_param):
     return firmware
 
 
+def display_status(com):
+    status = icsp.get_status(com)
+    icsp.sync(com)
+
+    print("TRIS      VCD 21V  TR  |LAT      VCD 21V  TR ")
+    print("     76543210 76543210 |    76543210 76543210")
+    print('     {0:08b} '.format(status[0]), end='')
+    print('{0:08b} |'.format(status[1]), end='')
+    print('    {0:08b} '.format(status[2]), end='')
+    print('{0:08b} '.format(status[3]), end='')
+
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(prog='flash', description='icsp programming tool.')
     parser.add_argument('-p', '--port', default=DEFAULT_PORT, help='serial device')
     parser.add_argument('-b', '--baud', default=DEFAULT_BAUD, help='baud rate')
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-i', '--id', action='store_true', help='read chip id info from target')
+    group.add_argument('-w', '--write', action='store_true', help='write firmware to target')
+    group.add_argument('-r', '--read', action='store_true', help='Read target and save to file')
+
     parser.add_argument('-q', '--quiet', action='store_true', help="quiet mode. don't dump hex files")
     parser.add_argument('-e', '--enh', action='store_true', help='Enhanced midrange programming method')
     parser.add_argument('-f', '--fast', action='store_true', help='Fast mode.  Do minimal verification')
-    parser.add_argument('-r', '--read', action='store_true', help='Read target and save to filename')
     parser.add_argument('-l', '--log', nargs='?', const='bload.log', default=None,
                         help='Log all I/O to file')
     parser.add_argument('-t', '--test', action='store_true', help='Test')
@@ -173,6 +210,8 @@ def main():
     parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
 
     args = parser.parse_args()
+
+    args.write = not args.read and not args.id
 
     programming_method = icsp.ENH if args.enh else icsp.MID
 
@@ -185,12 +224,12 @@ def main():
     # logf = sys.stdout
 
     # Check for a filename
-    if args.filename is None:
+    if not args.id and args.filename is None:
         parser.print_help()
         sys.exit()
 
     # unless we are reading out the chip firmware read a new file to load
-    if not args.read:
+    if not args.read and not args.id:
         with open(args.filename) as fp:
             file_firmware = hexfile.Hexfile()
             file_firmware.read(fp)
@@ -208,7 +247,7 @@ def main():
 
         ser = mock.ICSPHost(firmware)
     else:
-        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, imeout=TOUT)
+        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
 
     # Create wrapper
     com = comm.Comm(ser, logf)
@@ -216,14 +255,17 @@ def main():
     # Bring target out of reset
     print('Reset...')
     time.sleep(0.050)
-    com.pulse_dtr(250)
+    com.pulse_dtr(0.250)
     time.sleep(0.050)
 
     # Trigger and look for prompt
-    com.flush()
-    com.write(b'\n')
-    (count, value) = com.read(1)
-    if count == 0 or value != b'K':
+    for _ in range(5):
+        com.flush()
+        com.write(b'K')
+        (count, value) = com.read(1)
+        if value == b'K':
+            break
+    else:
         com.close()
 
         print(f'[{count}, {value}] Could not find ICSP on {args.port}\n')
@@ -237,33 +279,23 @@ def main():
     # Get host controller version
     print('Getting Version...')
     ver = icsp.get_version(com)
-    print('Hardware version:', ver)
+    print('KT150 firmware version:', ver)
     print('Method: ', icsp.FAMILY_NAMES[programming_method])
 
+    display_status(com)
     print('Start...')
-    icsp.send_start(com, programming_method)
+    icsp.start(com)
+    icsp.sync(com)
+    display_status(com)
 
     print("\nDevice Info:")
-    icsp.load_config(com)
-    icsp.jump(com, 6)
+    device_id, device_rev, cfg1, cfg2, cal1, cal2 = read_info(com, programming_method)
 
-    chip_id = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-    cfg1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-    cfg2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-    cal1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-    cal2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-
-    # enhanced and midrange have different id/rev bits
-    device_id = chip_id >> (5 if programming_method == icsp.ENH else 4)
-    device_rev = chip_id & (0x1F if programming_method == icsp.ENH else 0x0F)
     if device_id not in picdevice.PARAM:
         print(" ID: %04X rev %x not in device list" % (device_id, device_rev))
 
         print("End...")
-        icsp.send_end(com, programming_method)
-
-        print("Reset...")
-        icsp.hard_reset(com)
+        icsp.release(com)
 
         sys.exit()
 
@@ -274,9 +306,6 @@ def main():
     print(f"CFG: {cfg1:04X} {cfg2:04X}")
     print(f"CAL: {cal1:04X} {cal2:04X}")
 
-    if device_name is None:
-        raise RuntimeError("Unknown device")
-
     # Set ranges and addresses based on the bootloader config and device information
     min_page = 0
     max_page = device_param['max_page']
@@ -286,7 +315,7 @@ def main():
 
     if args.read:
         print("Reset Address...")
-        icsp.reset(com, device_param)
+        icsp.reset_address(com)
 
         print("Reading Firmware...")
         chip_firmware = read_firmware(com, device_param)
@@ -297,33 +326,30 @@ def main():
 
         if not args.quiet:
             print(chip_firmware.display())
-    else:
+    elif args.write:
         # Erase entire device including userid locations
         print("Erase Device...")
         icsp.load_config(com)
-        icsp.erase_program(com, device_param)
-        icsp.erase_data(com, device_param)
+        icsp.erase_program(com)
+        icsp.erase_data(com)
 
-        print("Reset Address...")
-        icsp.reset(com, device_param)
+        icsp.reset_address(com)
 
+        sys.stderr.flush()
         print(f"Writing Program 0x0 .. 0x{max_page:#0X} ...")
         icsp.write_program_pages(com, file_firmware, device_param)
 
         print(f"Writing Data {min_data:#0X} .. {max_data:#0X} ...")
         icsp.write_data_pages(com, file_firmware, device_param)
 
-        print("Reset Address...")
-        icsp.reset(com, device_param)
-
         print("Writing Config 0x%X ..." % conf_page_num)
+        icsp.reset_address(com)
         icsp.write_config(com, file_firmware, device_param)
 
-        print("Reset Address...")
-        icsp.reset(com, device_param)
-
         print("Reading Firmware...")
+        icsp.reset_address(com)
         verify_firmware = read_firmware(com, device_param)
+        print()
 
         # Compare protected regions to ensure they are compatible
         print("Comparing firmware pages 0x%X .. 0x%X, 0x%X .. 0x%X, 0x%X..." %
@@ -345,12 +371,12 @@ def main():
             print(" OK")
 
     print("End...")
-    icsp.send_end(com, programming_method)
-
-    print("Reset...")
-    icsp.hard_reset(com)
+    icsp.release(com)
 
     com.close()
 
+
 if __name__ == '__main__':
+    start = time.time()
     main()
+    print(f"elapsed time: {time.time() - start:0.2f} seconds")

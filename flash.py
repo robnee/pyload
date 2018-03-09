@@ -3,7 +3,7 @@
 """
 Microchip ICSP driver
 
-$Id: flash.py 819 2018-02-20 23:54:49Z rnee $
+$Id: flash.py 848 2018-03-09 02:58:57Z rnee $
 
 Uses PIC 16F819 as the hardware interface via the standard BLOAD 4pin serial
 interface.
@@ -124,7 +124,26 @@ def read_firmware(com, device_param):
     return firmware
 
 
+def start(com):
+    # icsp_clk_output
+    icsp.send_command(com, b'LL')
+    # icsp_clk_low
+    icsp.send_command(com, b'LM')
+
+    # icsp_mclr2_output
+    icsp.send_command(com, b'LH')
+    # icsp_mclr2_low
+    icsp.send_command(com, b'LI')
+
+    time.sleep(0.001)
+
+    # Send key sequence with an extra clock at the end
+    icsp.send_command(com, b'UPUHUCUMLO')
+
+
+
 def main():
+    """main routine"""
     parser = argparse.ArgumentParser(prog='flash', description='icsp programming tool.')
     parser.add_argument('-p', '--port', default=DEFAULT_PORT, help='serial device')
     parser.add_argument('-b', '--baud', default=DEFAULT_BAUD, help='baud rate')
@@ -136,7 +155,7 @@ def main():
                         help='Log all I/O to file')
     parser.add_argument('-t', '--test', action='store_true', help='Test')
     parser.add_argument('--version', action='version',
-                        version='$Id: flash.py 819 2018-02-20 23:54:49Z rnee $')
+                        version='$Id: flash.py 848 2018-03-09 02:58:57Z rnee $')
     parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
 
     args = parser.parse_args()
@@ -174,7 +193,7 @@ def main():
     # Bring target out of reset
     print('Reset...')
     time.sleep(0.050)
-    com.pulse_dtr(250)
+    com.pulse_dtr(0.250)
     time.sleep(0.050)
     com.flush()
 
@@ -202,7 +221,7 @@ def main():
     print('Method: ', icsp.FAMILY_NAMES[programming_method])
 
     print('Start...')
-    icsp.send_start(com, programming_method)
+    start(com)
 
     print("\nDevice Info:")
     icsp.load_config(com)
@@ -221,10 +240,7 @@ def main():
         print(" ID: %04X rev %x not in device list" % (device_id, device_rev))
 
         print("End...")
-        icsp.send_end(com, programming_method)
-
-        print("Reset...")
-        icsp.hard_reset(com)
+        icsp.release(com)
 
         sys.exit()
 
@@ -247,7 +263,7 @@ def main():
 
     if args.read:
         print("Reset Address...")
-        icsp.reset(com, device_param)
+        icsp.reset_address(com)
 
         print("Reading Firmware...")
         chip_firmware = read_firmware(com, device_param)
@@ -262,27 +278,26 @@ def main():
         # Erase entire device including userid locations
         print("Erase Device...")
         icsp.load_config(com)
-        icsp.erase_program(com, device_param)
-        icsp.erase_data(com, device_param)
+        icsp.erase_program(com)
+        icsp.erase_data(com)
 
         print("Reset Address...")
-        icsp.reset(com, device_param)
+        icsp.reset_address(com)
 
         print("Writing Program 0x%X .. 0x%X ..." % (0, max_page))
-        # noinspection PyUnboundLocalVariable
         icsp.write_program_pages(com, file_firmware, device_param)
 
         print("Writing Data 0x%X .. 0x%X ..." % (min_data, max_data))
         icsp.write_data_pages(com, file_firmware, device_param)
 
         print("Reset Address...")
-        icsp.reset(com, device_param)
+        icsp.reset_address(com)
 
         print("Writing Config 0x%X ..." % conf_page_num)
         icsp.write_config(com, file_firmware, device_param)
 
         print("Reset Address...")
-        icsp.reset(com, device_param)
+        icsp.reset_address(com)
 
         print("Reading Firmware...")
         verify_firmware = read_firmware(com, device_param)
@@ -298,22 +313,22 @@ def main():
             print("\nWARNING!\nError verifying firmware.")
 
             for page_num in error_list:
+                print("File:")
                 if file_firmware[page_num]:
-                    print("File:")
                     print(file_firmware[page_num].display(page_num))
+                print("Chip:")
                 if verify_firmware[page_num]:
-                    print("Chip:")
                     print(verify_firmware[page_num].display(page_num))
         else:
             print(" OK")
 
     print("End...")
-    icsp.send_end(com, programming_method)
-
-    print("Reset...")
-    icsp.hard_reset(com)
+    icsp.release(com)
 
     com.close()
 
+
 if __name__ == '__main__':
+    start_time = time.time()
     main()
+    print("elapsed time:", time.time() - start_time)

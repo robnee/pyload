@@ -315,6 +315,68 @@ class Hexfile:
         return s
 
 
+    def memory_map(self):
+        """
+        MEMORY USAGE MAP ('X' = Used,  '-' = Unused)
+
+        0000 : XX--XXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+        0040 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+        0680 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+        06C0 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+        0700 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+        0740 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXXX
+        0780 : XXXXXXXXXXXXXXXX XXXXXXXXXXXXXXX- ---------------- ----------------
+        8000 : XXXX---XX------- ---------------- ---------------- ----------------
+        F000 : X--------------- ---------------- ---------------- ----------------
+
+        All other memory blocks unused.
+
+        Program Memory Words Used:   413
+        Program Memory Words Free:  1635
+
+        """
+
+        print("MEMORY USAGE MAP ('X' = Used,  '-' = Unused)\n")
+
+        word_count = 0
+        for page_num in range(0, len(self.page_list), 2):
+            page1 = self.page_list[page_num]
+            page2 = self.page_list[page_num + 1] if page_num + 1 < len(self.page_list) else None
+
+            if page1 or page2:
+                print(f"{page_num * PAGELEN:04X} : ", end='')
+                if page1:
+                    for word_num, word in enumerate(page1):
+                        if word is not None:
+                            print('X', end='')
+                            word_count += 1
+                        else:
+                            print('-', end='')
+
+                        if (word_num + 1) % 16 == 0:
+                            print(' ', end='')
+                else:
+                    print("---------------- ---------------- ", end='')
+
+                if page2:
+                    for word_num, word in enumerate(page2):
+                        if word is not None:
+                            print('X', end='')
+                            word_count += 1
+                        else:
+                            print('-', end='')
+
+                        if (word_num + 1) % 16 == 0:
+                            print(' ', end='')
+                    print()
+                else:
+                    print("---------------- ---------------- ")
+
+        print("\nAll other memory blocks unused.\n")
+
+        print(f"Program Memory Words Used:{word_count:6d}")
+
+
 if __name__ == '__main__':
     p = Page('        4F2C        12345678                                                                5F00                            9F6C')
     print(bytes(p))

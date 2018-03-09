@@ -1,32 +1,37 @@
 """Simple Terminal
 
-$Id: term.py 817 2018-02-20 03:33:56Z rnee $
+$Id: term.py 836 2018-03-04 00:52:56Z rnee $
 """
 
+import os
 import sys
-import termios
 
 
 def readkey():
-    """read a key without echo or buffering"""
-    stdin = sys.stdin
-    fd = stdin.fileno()
+    if os.name == 'nt':
+        import msvcrt
+        return msvcrt.getch()
+    else:
+        """read a key without echo or buffering"""
+        import termios
+        stdin = sys.stdin
+        fd = stdin.fileno()
 
-    # Do in two lines so we get two copies
-    new = termios.tcgetattr(fd)
-    old = termios.tcgetattr(fd)
+        # Do in two lines so we get two copies
+        new = termios.tcgetattr(fd)
+        old = termios.tcgetattr(fd)
 
-    new[3] &= ~termios.ICANON
-    new[6][termios.VTIME] = b'\x01'
-    new[6][termios.VMIN] = b'\x00'
+        new[3] &= ~termios.ICANON
+        new[6][termios.VTIME] = b'\x01'
+        new[6][termios.VMIN] = b'\x00'
 
-    try:
-        termios.tcsetattr(fd, termios.TCSAFLUSH, new)
-        char = stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSANOW, old)
+        try:
+            termios.tcsetattr(fd, termios.TCSAFLUSH, new)
+            char = stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSANOW, old)
 
-    return char
+        return char
 
 
 def terminal(com):
