@@ -53,7 +53,6 @@ Z
 """
 
 import sys
-import time
 import intelhex as hexfile
 import comm
 from typing import Iterable
@@ -63,15 +62,11 @@ from typing import Iterable
 
 PAGELEN = 32
 PAGEBYTES = PAGELEN * 2
-MID = b'\x00'
-ENH = b'\x01'
-FAMILY_NAMES = {MID: 'Midrange', ENH: 'Enhanced Midrange'}
 
 CMD_LOAD_CONFIG = b'C\x00'
 CMD_LOAD_PGM = b'C\x02'
 CMD_LOAD_DATA = b'C\x03'
 CMD_READ_PGM = b'C\x04'
-CMD_READ_DATA = b'C\x05'
 CMD_INC = b'C\x06'
 CMD_PROGRAM_INT = b'C\x08'
 CMD_PROGRAM_EXT = b'C\x18'
@@ -79,7 +74,15 @@ CMD_PROGRAM_END = b'C\x0A'
 CMD_ERASE_PGM = b'C\x09'
 CMD_ERASE_DATA = b'C\x0B'
 CMD_RESET_ADDRESS = b'C\x16'
-
+CMD_JUMP = b'J'
+CMD_READ_PAGE = b'F'
+CMD_READ_DATA = b'G'
+CMD_SEND_WORD = b'W'
+CMD_SYNC = b'K'
+CMD_PAUSE = b'P'
+CMD_RELEASE = b'Z'
+CMD_STATUS = b'Q'
+CMD_VERSION = b'V'
 
 """ICSP high-level API"""
 
@@ -124,7 +127,7 @@ def read_config(com: comm.Comm, device) -> bytes:
     load_config(com)
 
     # read specified number of config words
-    data = read_page(com, b'F', conf_page_len)
+    data = read_page(com, CMD_READ_PAGE, conf_page_len)
 
     count = len(data)
 
@@ -157,17 +160,17 @@ def write_page(com: comm.Comm, device, cmd_code: bytes, data: bytes, num_latches
         # this is the last word on the page
         if cmd_code == b'D':
             send_command(com, CMD_LOAD_DATA)
-            send_command(com, b'W', word)
-            program(com, cmd_code)
+            send_command(com, CMD_SEND_WORD, word)
+            program(com)
             send_command(com, CMD_INC)
         elif word_count % num_latches == 0 or word_count == len(data):
             send_command(com, CMD_LOAD_PGM)
-            send_command(com, b'W', word)
-            program(com, cmd_code)
+            send_command(com, CMD_SEND_WORD, word)
+            program(com)
             send_command(com, CMD_INC)
         else:
             send_command(com, CMD_LOAD_PGM)
-            send_command(com, b'W', word)
+            send_command(com, CMD_SEND_WORD, word)
             send_command(com, CMD_INC)
 
         word_count += 1
@@ -230,7 +233,7 @@ def read_pages(com: comm.Comm, cmd_code: bytes, page_nums: Iterable[int]):
 def read_program(com: comm.Comm, device) -> hexfile.Hexfile:
     """read all program pages"""
     page_nums = range(0, device['max_page'] + 1)
-    page_list = read_pages(com, b'F', page_nums)
+    page_list = read_pages(com, CMD_READ_PAGE, page_nums)
 
     pages = hexfile.Hexfile()
 
@@ -252,25 +255,53 @@ def read_program(com: comm.Comm, device) -> hexfile.Hexfile:
 
 def read_data(com: comm.Comm, device):
     """read all data pages"""
-    page_nums = range(device['min_data'], device['max_data'] + 1)
-    data_list = read_pages(com, b'G', page_nums)
-
     pages = hexfile.Hexfile()
 
-    for page_num, data in zip(page_nums, data_list):
-        if data:
-            page = hexfile.Page(data)
+    # if data region is not defined then return an empty list
+    if device['min_data'] or device['max_data']:
+        page_nums = range(device['min_data'], device['max_data'] + 1)
+        data_list = read_pages(com, CMD_READ_DATA, page_nums)
 
-            for offset in range(0, len(page)):
-                if page[offset] == 0x00FF:
-                    page[offset] = None
+        for page_num, data in zip(page_nums, data_list):
+            if data:
+                page = hexfile.Page(data)
 
-            if any(page):
-                pages[page_num] = page
+                for offset in range(0, len(page)):
+                    if page[offset] == 0x00FF:
+                        page[offset] = None
+
+                if any(page):
+                    pages[page_num] = page
 
     return pages
 
 # ICSP low-level protocol
+
+
+def send_command(com: comm.Comm, cmd: bytes, data=None):
+    """"package and send command with data"""
+    if data is None:
+        data = b''
+
+    com.write(cmd + data)
+
+
+def get_version(com: comm.Comm):
+    """Get Host controller version"""
+    com.write(CMD_VERSION)
+
+    ver = com.read_line()
+
+    return ver.decode('utf-8').rstrip()
+
+
+def get_status(com: comm.Comm):
+    """Get Host controller version"""
+    com.write(CMD_STATUS)
+
+    count, status = com.read(8)
+
+    return status
 
 
 def wait_k(com):
@@ -294,66 +325,13 @@ def wait_k(com):
     return data
 
 
-def send_command(com: comm.Comm, cmd: bytes, data=None):
-    """"package and send command with data"""
-    if data is None:
-        data = b''
-
-    com.write(cmd + data)
-
-
-def start(com: comm.Comm):
-    """reset target and start ICSP"""
-    #send_command(com, b'S')
-
-    release(com)
-
-    # icsp_clk_output
-    send_command(com, b'LL')
-    # icsp_clk_low
-    send_command(com, b'LM')
-    # icsp_dat_output
-    send_command(com, b'LQ')
-    # icsp_dat_low
-    send_command(com, b'LR')
-
-    # icsp_mclr2_output
-    send_command(com, b'LH')
-    # icsp_mclr2_high
-    send_command(com, b'LJ')
-    # icsp_von_high
-    send_command(com, b'LU')
-
-
-def get_version(com: comm.Comm):
-    """Get Host controller version"""
-    cmd = b'V'
-    com.write(cmd)
-
-    ver = com.read_line()
-
-    return ver.decode('utf-8').rstrip()
-
-
-def get_status(com: comm.Comm):
-    """Get Host controller version"""
-
-    cmd = b'Q'
-    com.write(cmd)
-
-    count, status = com.read(8)
-
-    return status
-
 def sync(com: comm.Comm):
     """sync commands stream"""
-
-    cmd = b'K'
-    com.write(cmd)
+    com.write(CMD_SYNC)
 
     prompt = wait_k(com)
     if prompt != b'K':
-        raise RuntimeError(f'Error [{prompt}] command:{cmd} ICSP')
+        raise RuntimeError(f'Error [{prompt}] command:{CMD_SYNC} ICSP')
 
     # There should be no characters waiting at this point
     avail = com.avail()
@@ -364,16 +342,18 @@ def sync(com: comm.Comm):
 def erase_data(com: comm.Comm):
     """erase data memory"""
     send_command(com, CMD_ERASE_DATA)
-    time.sleep(0.005)
+    send_command(com, CMD_PAUSE)
+    sync(com)
 
 
 def erase_program(com: comm.Comm):
     """erase program memory"""
     send_command(com, CMD_ERASE_PGM)
-    time.sleep(0.005)
+    send_command(com, CMD_PAUSE)
+    sync(com)
 
 
-def program(com: comm.Comm, cmd_code: bytes):
+def program(com: comm.Comm):
     """
     if cmd_code != b'C':
         send_command(com, CMD_PROGRAM_EXT)
@@ -382,7 +362,7 @@ def program(com: comm.Comm, cmd_code: bytes):
     else:
     """
     send_command(com, CMD_PROGRAM_INT)
-    time.sleep(0.005)
+    send_command(com, CMD_PAUSE)
     sync(com)
 
 
@@ -390,18 +370,18 @@ def load_config(com: comm.Comm, data=b'\x00\x00'):
     """Switch to config segment and load a word"""
     #send_command(com, b'C' + data)
     send_command(com, CMD_LOAD_CONFIG)
-    send_command(com, b'W' + data)
+    send_command(com, CMD_SEND_WORD, data)
 
 
 def jump(com: comm.Comm, count):
     """jump program counter forward indicated number of words"""
-    send_command(com, b'J' + count.to_bytes(2, 'little'))
+    send_command(com, CMD_JUMP, count.to_bytes(2, 'little'))
     sync(com)
 
 
 def release(com: comm.Comm):
     """release"""
-    send_command(com, b'Z')
+    send_command(com, CMD_RELEASE)
     sync(com)
 
 

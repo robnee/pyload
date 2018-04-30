@@ -1,6 +1,6 @@
 """Simple Terminal
 
-$Id: term.py 836 2018-03-04 00:52:56Z rnee $
+$Id: term.py 892 2018-04-20 01:57:54Z rnee $
 """
 
 import os
@@ -8,6 +8,7 @@ import sys
 
 
 def readkey():
+    """ Read a single key with support for Linux and Windows """
     if os.name == 'nt':
         import msvcrt
         return msvcrt.getch()

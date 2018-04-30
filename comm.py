@@ -1,6 +1,6 @@
 """Serial port comm routines
 
-$Id: comm.py 845 2018-03-09 01:26:51Z rnee $
+$Id: comm.py 861 2018-03-15 23:44:30Z rnee $
 """
 
 import time
@@ -83,7 +83,7 @@ class Comm:
     def pulse_dtr(self, duration: float=0.001):
         """pulse DTR line duration in seconds"""
         self.ser.dtr = True
-        time.sleep(duration / 1000.0)
+        time.sleep(duration)
         self.ser.dtr = False
 
         self._log(bytes("{0}".format(duration), 'utf-8'), "PDTR")
@@ -99,15 +99,22 @@ class Comm:
 
     def pulse_break(self, duration):
         """send a break"""
-        self.ser.send_break(duration / 1000.0)
+        self.ser.send_break(duration)
 
         self._log(bytes("{0}".format(duration), 'utf-8'), "PBRK")
+
+    def set_timeout(self, duration):
+        """set timeout in seconds"""
+        self.ser.timeout = duration
+
+        self._log(bytes("{0}".format(duration), 'utf-8'), "STTO")
 
     def _log(self, data: bytes, desc: str):
         """write a log string"""
         if self.logf:
+            timex = time.time() - self.time0
             self.logf.write("%8.3f %4s %3d : " %
-                            (time.time() - self.time0, desc, len(data)))
+                            (timex, desc, len(data)))
             for n, c in enumerate(data):
                 if ord(' ') <= c <= ord('~'):
                     self.logf.write("%02x[%s] " % (c, chr(c)))
@@ -121,5 +128,4 @@ class Comm:
 
             avail = self.avail()
             if avail > 0:
-                self.logf.write("%8.3f INBF %3d\n" % (0, avail))
-
+                self.logf.write("%8.3f INBF %3d\n" % (timex, avail))

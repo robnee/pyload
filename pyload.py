@@ -3,7 +3,7 @@
 """
 Bootloader with automatic reset control.
 
-$Id: pyload.py 838 2018-03-04 00:54:29Z rnee $
+$Id: pyload.py 901 2018-04-28 21:44:56Z rnee $
 
 Uses DTR line to control MCLR pin on PIC.  This resets the PIC at which time it
 waits 250us for a '!' character as an attention signal.  Once received the PIC
@@ -155,24 +155,54 @@ DEFAULT_PORT = '/dev/ttyUSB0'
 DATA = 8
 TOUT = 1
 
-# -------------------------------------------------------------------------------
+
+def run_range_test(com):
+    """ test the bootloader range checking """
+
+    for addr in range(0x000, 0x1000, 0x010):
+        cmd_code = b'T'
+        address = addr.to_bytes(2, 'little')
+        checksum = bytes([bload.calc_checksum(address)])
+
+        cmd = bytes(cmd_code) + address + checksum
+
+        com.write(cmd)
+        count, result = com.read(1)
+
+        if result == b'C':
+            print(f'{addr:X} -> checksum {cmd} {address} {checksum}')
+
+            count, result = com.read(1)
+            if result != b'K':
+                print('No prompt after error')
+        elif result == b'R':
+                print(f'{addr:X} -> Range Error')
+
+                count, result = com.read(1)
+                if result != b'K':
+                    print('No prompt after error')
+
+        elif result == b'E':
+            print(f'{addr:X} -> Error')
+
+            count, result = com.read(1)
+            if result != b'K':
+                print('No prompt after error')
+        else:
+            print(f'{addr:X} -> OK')
+
+        avail = com.avail()
+        if avail > 0:
+            data = com.read(avail)
+            print('avail:', avail, 'data:', data)
 
 def main():
-    parser = argparse.ArgumentParser(prog='pyload', description='pyload Bload bootloader tool.')
-    parser.add_argument('-p', '--port', default=DEFAULT_PORT, help=f'serial device ({DEFAULT_PORT})')
-    parser.add_argument('-b', '--baud', default=DEFAULT_BAUD, help='baud rate')
-    parser.add_argument('-q', '--quiet', action='store_true', help='quiet mode. dont dump hex files')
-    parser.add_argument('-c', '--cdef', action='store_true', help='Convert filename to C definition statements')
-    parser.add_argument('-f', '--fast', action='store_true', help='Fast mode.  Do minimal verification')
-    parser.add_argument('-r', '--read', action='store_true', help='Read target and save to filename')
-    parser.add_argument('-x', '--reset', action='store_true', help='Reset target and exit')
-    parser.add_argument('-t', '--term', action='store_true', help='Start terminal mode after processing')
-    parser.add_argument('-l', '--log', nargs='?', const='bload.log', default=None, help='Log all I/O to file')
-    parser.add_argument('--version', action='version', version='$Id: pyload.py 838 2018-03-04 00:54:29Z rnee $')
+    """ main """
 
-    parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
-
-    args = parser.parse_args()
+    # reading and fast mode are incompatible
+    if args.read and args.fast:
+        parser.print_help()
+        sys.exit()
 
     if args.log:
         if os.path.exists(args.log):
@@ -210,6 +240,8 @@ def main():
             if not args.quiet:
                 print(args.filename)
                 print(file_firmware.display())
+    else:
+        file_firmware = None
 
     if args.cdef:
         for page_num in range(64):
@@ -217,6 +249,8 @@ def main():
                 print('page_list[%d] = "%s";' % (page_num, file_firmware[page_num]))
 
         sys.exit()
+
+    start_time = time.time()
 
     # Init comm (holds target in reset)
     print('Initializing {} {} ...'.format(args.port, args.baud))
@@ -248,7 +282,8 @@ def main():
     print('Connected...')
 
     # Get info about the bootloader
-    (boot_version, boot_pagesize, boot_start, boot_end, data_start, data_end) = bload.get_info(com)
+    (boot_version, boot_pagesize, boot_start, boot_size,
+     data_start, data_end, code_end) = bload.get_info(com)
 
     if boot_version == 0x00:
         print("Target does not support Info command\n")
@@ -256,14 +291,16 @@ def main():
         # Legacy values
         boot_version = 0x10
         boot_start = 0x38
-        boot_end = 0x3f
+        boot_size = 0x180
+        code_end = 0x3f
         data_start = 0x108
         data_end = 0x110
 
     if boot_version >= 0x14:
         # Recompute word addresses as page addresses
         boot_start = (boot_start & 0x7FFF) // boot_pagesize
-        boot_end = (boot_end & 0x7FFF) // boot_pagesize
+        boot_end = boot_start + boot_size // boot_pagesize - 1
+        code_end //= boot_pagesize
         data_start //= boot_pagesize
         data_end //= boot_pagesize
     else:
@@ -290,33 +327,40 @@ def main():
         device_rev = 1
         config_words = ""
 
-    print("\nBootloader Version: %02X  Page Size: 0x%02X  Bootloader Region: 0x%04X - 0x%04X"
-          "  EEPROM Data Region: 0x%04x - 0x%04x\n" %
-          (boot_version, boot_pagesize, boot_start, boot_end, data_start, data_end))
+    device_param = picdevice.PARAM[device_id]
+    device_name = device_param['name']
+
+    print("\nBootloader Version: %02X\n"
+          "Page Size:          0x%02X\n"
+          "Bootloader Region:  0x%04X - 0x%04X\n"
+          "Program Region:     0x%04X - 0x%04X\n"
+          "EEPROM Data Region: 0x%04X - 0x%04X\n" %
+          (boot_version, boot_pagesize, boot_start, boot_end, 0, code_end, data_start, data_end))
 
     print("CONFIG User ID: %s  Device ID: %04X %s Rev: %1X  Config Words: %s" %
-          (user_id, device_id, picdevice.PARAM[device_id]['name'], device_rev, config_words))
+          (user_id, device_id, device_name, device_rev, config_words))
 
     # Set ranges and addresses based on the bootloader config and device information
     min_user = 1
     max_user = boot_start - 1
-    max_addr = boot_end if max_user < boot_end else max_user
     conf_page = picdevice.PARAM[device_id]['conf_page']
     min_data = picdevice.PARAM[device_id]['min_data']
     max_data = picdevice.PARAM[device_id]['max_data']
-
-    device_param = picdevice.PARAM[device_id]
-    device_name = device_param['name']
 
     if min_data != data_start or max_data != data_end:
         print("min_data=", min_data, 'max_data=', max_data)
         print("data_start=", data_start, 'data_end=', data_end)
         sys.exit()
 
-    prog_list = list(range(0, max_addr + 1))
+    prog_list = list(range(0, code_end + 1))
     user_list = list(range(min_user, max_user + 1))
     boot_list = list(range(boot_start, boot_end + 1))
     data_list = list(range(min_data, max_data + 1))
+
+    #
+    # Test routine for bootloader range check
+    #
+    # run_range_test(com)
 
     # Read existing firmware
     if args.fast:
@@ -355,16 +399,6 @@ def main():
         conf_str = conf_str[:6 * 4] + '    ' + conf_str[7 * 4:]
         chip_firmware[conf_page] = hexfile.Page(conf_str)
 
-    elif boot_version > 0x10:
-        sys.stdout.write("Reading Firwmare    ")
-        prog_pages = bload.read_program(com, prog_list)
-        data_pages = bload.read_data(com, data_list)
-        print()
-
-        chip_firmware = prog_pages + data_pages
-
-        if not args.quiet:
-            print(chip_firmware.display())
     else:
         print('unsupported bootloader version:', boot_version)
         chip_firmware = None
@@ -485,6 +519,8 @@ def main():
     print("Reseting target...")
     com.pulse_dtr(0.250)
 
+    print("elapsed time:", time.time() - start_time)
+
     if args.term:
         term.terminal(com)
 
@@ -492,6 +528,20 @@ def main():
 
 
 if __name__ == "__main__":
-    start = time.time()
+    parser = argparse.ArgumentParser(prog='pyload', description='pyload Bload bootloader tool.')
+    parser.add_argument('-p', '--port', default=DEFAULT_PORT, help=f'serial device ({DEFAULT_PORT})')
+    parser.add_argument('-b', '--baud', default=DEFAULT_BAUD, help='baud rate')
+    parser.add_argument('-q', '--quiet', action='store_true', help='quiet mode. dont dump hex files')
+    parser.add_argument('-c', '--cdef', action='store_true', help='Convert filename to C definition statements')
+    parser.add_argument('-f', '--fast', action='store_true', help='Fast mode.  Do minimal verification')
+    parser.add_argument('-r', '--read', action='store_true', help='Read target and save to filename')
+    parser.add_argument('-x', '--reset', action='store_true', help='Reset target and exit')
+    parser.add_argument('-t', '--term', action='store_true', help='Start terminal mode after processing')
+    parser.add_argument('-l', '--log', nargs='?', const='bload.log', default=None, help='Log all I/O to file')
+    parser.add_argument('--version', action='version', version='$Id: pyload.py 901 2018-04-28 21:44:56Z rnee $')
+
+    parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
+
+    args = parser.parse_args()
+
     main()
-    print("elapsed time:", time.time() - start)

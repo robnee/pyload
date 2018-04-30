@@ -3,7 +3,7 @@
 """
 Microchip ICSP driver
 
-$Id: flash.py 848 2018-03-09 02:58:57Z rnee $
+$Id: flash.py 898 2018-04-28 01:54:19Z rnee $
 
 Uses PIC 16F819 as the hardware interface via the standard BLOAD 4pin serial
 interface.
@@ -94,6 +94,21 @@ DATA = 8
 TOUT = 1
 
 
+def read_info(com):
+    """read config info"""
+    icsp.load_config(com)
+    icsp.jump(com, 5)
+
+    chip_rev = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    chip_id = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    cfg1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    cfg2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    cal1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    cal2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+
+    return chip_rev, chip_id, cfg1, cfg2, cal1, cal2
+
+
 def read_firmware(com, device_param):
     """read firmware from target and tweak so that it can be written in standard
     Microchip format.  Certain words such as chip id and calibration for example
@@ -112,12 +127,10 @@ def read_firmware(com, device_param):
         if conf_page[i] == 0x3FFF:
             conf_page[i] = None
 
-    # Blank out 0x04 and 0x05, reserved
-    conf_page[4], conf_page[5] = None, None
-    # blank out chip id
-    conf_page[6] = None
+    # Blank out 0x04, reserved, revision and chip_id
+    conf_page[4: 7] = None
     # blank out calibration words
-    conf_page[9], conf_page[10] = None, None
+    conf_page[9: 17] = None
 
     firmware[device_param['conf_page']] = conf_page
 
@@ -125,6 +138,8 @@ def read_firmware(com, device_param):
 
 
 def start(com):
+    """send start sequence"""
+
     # icsp_clk_output
     icsp.send_command(com, b'LL')
     # icsp_clk_low
@@ -141,7 +156,6 @@ def start(com):
     icsp.send_command(com, b'UPUHUCUMLO')
 
 
-
 def main():
     """main routine"""
     parser = argparse.ArgumentParser(prog='flash', description='icsp programming tool.')
@@ -155,12 +169,10 @@ def main():
                         help='Log all I/O to file')
     parser.add_argument('-t', '--test', action='store_true', help='Test')
     parser.add_argument('--version', action='version',
-                        version='$Id: flash.py 848 2018-03-09 02:58:57Z rnee $')
+                        version='$Id: flash.py 898 2018-04-28 01:54:19Z rnee $')
     parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
 
     args = parser.parse_args()
-
-    programming_method = icsp.ENH if args.enh else icsp.MID
 
     if args.log:
         if os.path.exists(args.log):
@@ -182,6 +194,8 @@ def main():
             if not args.quiet:
                 print(args.filename)
                 print(file_firmware.display())
+    else:
+        file_firmware = None
 
     # Init comm (holds target in reset)
     print('Initializing communications on {} {} ...'.format(args.port, args.baud))
@@ -218,26 +232,25 @@ def main():
     print('Getting Version...')
     ver = icsp.get_version(com)
     print('Hardware version:', ver)
-    print('Method: ', icsp.FAMILY_NAMES[programming_method])
 
     print('Start...')
     start(com)
 
     print("\nDevice Info:")
-    icsp.load_config(com)
-    icsp.jump(com, 6)
-
-    chip_id = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-    cfg1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-    cfg2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-    cal1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
-    cal2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
+    chip_rev, chip_id, cfg1, cfg2, cal1, cal2 = read_info(com)
 
     # enhanced and midrange have different id/rev bits
-    device_id = chip_id >> (5 if programming_method == icsp.ENH else 4)
-    device_rev = chip_id & (0x1F if programming_method == icsp.ENH else 0x0F)
-    if device_id not in picdevice.PARAM:
-        print(" ID: %04X rev %x not in device list" % (device_id, device_rev))
+    for mask, shift in ((0x00, 0), (0x00F, 4), (0x01F, 5)):
+        if chip_rev > 0x00 and chip_rev < 0x3FFF:
+            device_rev = chip_rev
+        else:
+            device_rev = chip_id & mask
+
+        device_id = chip_id >> shift
+        if device_id in picdevice.PARAM:
+            break
+    else:
+        print(" ID: %04X not in device list" % chip_id)
 
         print("End...")
         icsp.release(com)
@@ -276,10 +289,9 @@ def main():
             print(chip_firmware.display())
     else:
         # Erase entire device including userid locations
-        print("Erase Device...")
+        print("Erase Program...")
         icsp.load_config(com)
         icsp.erase_program(com)
-        icsp.erase_data(com)
 
         print("Reset Address...")
         icsp.reset_address(com)
@@ -287,8 +299,11 @@ def main():
         print("Writing Program 0x%X .. 0x%X ..." % (0, max_page))
         icsp.write_program_pages(com, file_firmware, device_param)
 
-        print("Writing Data 0x%X .. 0x%X ..." % (min_data, max_data))
-        icsp.write_data_pages(com, file_firmware, device_param)
+        if min_data < max_data:
+            print("Erase Data...")
+            icsp.erase_data(com)
+            print("Writing Data 0x%X .. 0x%X ..." % (min_data, max_data))
+            icsp.write_data_pages(com, file_firmware, device_param)
 
         print("Reset Address...")
         icsp.reset_address(com)
@@ -331,4 +346,4 @@ def main():
 if __name__ == '__main__':
     start_time = time.time()
     main()
-    print("elapsed time:", time.time() - start_time)
+    print(f"elapsed time: {time.time() - start_time:0.2f} seconds")

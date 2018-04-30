@@ -1,7 +1,7 @@
 #! /usr/bin/python3
 
 """
-$Id: bload.py 838 2018-03-04 00:54:29Z rnee $
+$Id: bload.py 899 2018-04-28 20:26:42Z rnee $
 """
 
 import sys
@@ -17,19 +17,35 @@ PAGESIZE = 64
 
 
 def get_address(page_num: int) -> bytes:
-    """ Return address as a LSB + MSB 16 bit word """
+    r""" Return address as a LSB + MSB 16 bit word
+
+    >>> get_address(12)
+    b'\x80\x01'
+    """
+
     addr = page_num * PAGESIZE // 2
 
     return addr.to_bytes(2, 'little')
 
 
-def calc_checksum(data):
-    """ Get the checksum """
+def calc_checksum(data: bytes) -> int:
+    """ Get the checksum
+
+    >>> calc_checksum(b'abcd')
+    138
+    >>> calc_checksum(b'')
+    0
+    """
+
     return sum(data) & 0xFF
 
 
 def get_command(cmd_code, page_num: int, data: bytes=None) -> bytes:
-    """ Generate a command string including a command char, address and checksum """
+    r""" Generate a command string including a command char, address and checksum
+
+    >>> get_command(b'X', 12, b'1234')
+    b'X\x80\x011234K'
+    """
 
     if data is None:
         data = b''
@@ -92,8 +108,8 @@ def get_info(com):
         print('Error [%s] bootloader info' % prompt)
         return bytes(16)
 
-    # return boot_version, boot_start, boot_end, data_start, data_end
-    return struct.unpack('BBHHHHxxxxxx', data)
+    # return boot_version, boot_start, boot_size, data_start, data_end, code_end
+    return struct.unpack('BBHHHHHxxxx', data)
 
 
 def erase_program_page(com, page_num: int):

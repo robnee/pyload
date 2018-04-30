@@ -54,16 +54,16 @@ class Page:
     >>> p[PAGELEN] = '77'
     Traceback (most recent call last):
     ...
-    IndexError: Page index out of range 33
+    IndexError: Page index out of range 32 33
     >>> p[4] = '4ff'
     Traceback (most recent call last):
     ...
-    ValueError: value is wrong length
+    ValueError: value (4ff) is wrong length 1
     >>> q = Page('00308C0001308D002100EA3099001A1C172888018C1425238C1025231A28    ' + '00308C0001308D002100EA3099001A1C172888018C1425238C1025231A28    ')
     >>> repr(q)
     "Page('00308C0001308D002100EA3099001A1C172888018C1425238C1025231A28    00308C0001308D002100EA3099001A1C172888018C1425238C1025231A28    ')"
     >>> q.display(0)
-    '000-0000 : |00308C0001308D002100EA3099001A1C 172888018C1425238C1025231A28    |\n000-0010 : |00308C0001308D002100EA3099001A1C 172888018C1425238C1025231A28    |'
+    '000-0000 : |00308C0001308D00 2100EA3099001A1C 172888018C142523 8C1025231A28    |\n000-0010 : |00308C0001308D00 2100EA3099001A1C 172888018C142523 8C1025231A28    |'
     >>> bytes(q)
     b'\x000\x8c\x00\x010\x8d\x00!\x00\xea0\x99\x00\x1a\x1c\x17(\x88\x01\x8c\x14%#\x8c\x10%#\x1a(..\x000\x8c\x00\x010\x8d\x00!\x00\xea0\x99\x00\x1a\x1c\x17(\x88\x01\x8c\x14%#\x8c\x10%#\x1a(..'
     """
@@ -114,7 +114,7 @@ class Page:
                 raise ValueError(f'value ({word}) is wrong length {length}')
             value = [None if x == '    ' else int(x[:2], 16) + (int(x[2:], 16) << 8) for x in chunks(word, 4)]
         elif word is None:
-            value = [None]
+            value = [None] * length
         else:
             raise TypeError('int or str only')
 
@@ -152,6 +152,7 @@ class Page:
             page_num, addr + PAGELEN // 2,
             disp[PAGELEN * 2: PAGELEN * 5 // 2], disp[PAGELEN * 5 // 2: PAGELEN * 3:],
             disp[PAGELEN * 3: PAGELEN * 7 // 2], disp[PAGELEN * 7 // 2:])
+
 
 class Hexfile:
     """wrapper around list of Pages"""
@@ -313,7 +314,6 @@ class Hexfile:
             if page:
                 s += page.display(page_num) + '\n'
         return s
-
 
     def memory_map(self):
         """

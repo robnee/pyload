@@ -127,7 +127,7 @@ TMP = '.'
 # TMP = os.environ['HOME'] + '/Documents/'
 
 
-def read_info(com, programming_method):
+def read_info(com):
     """read config info"""
     icsp.load_config(com)
     icsp.jump(com, 6)
@@ -138,11 +138,7 @@ def read_info(com, programming_method):
     cal1 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
     cal2 = int.from_bytes(icsp.read_page(com, b'F', 1), 'little')
 
-    # enhanced and midrange have different id/rev bits
-    device_id = chip_id >> (5 if programming_method == icsp.ENH else 4)
-    device_rev = chip_id & (0x1F if programming_method == icsp.ENH else 0x0F)
-
-    return device_id, device_rev, cfg1, cfg2, cal1, cal2
+    return chip_id, cfg1, cfg2, cal1, cal2
 
 
 def read_firmware(com, device_param):
@@ -175,7 +171,52 @@ def read_firmware(com, device_param):
     return firmware
 
 
+def send_start1(com: comm.Comm):
+    """send start sequence to remote"""
+    icsp.release(com)
+
+    # icsp_clk_output
+    icsp.send_command(com, b'LL')
+    # icsp_clk_low
+    icsp.send_command(com, b'LM')
+    # icsp_dat_output
+    icsp.send_command(com, b'LQ')
+    # icsp_dat_low
+    icsp.send_command(com, b'LR')
+
+    # icsp_mclr1_output
+    icsp.send_command(com, b'LE')
+    # icsp_mclr1_high
+    icsp.send_command(com, b'LG')
+
+    # icsp_von_high
+    icsp.send_command(com, b'LU')
+
+
+def send_start2(com: comm.Comm):
+    """send start sequence to remote"""
+    icsp.release(com)
+
+    # icsp_clk_output
+    icsp.send_command(com, b'LL')
+    # icsp_clk_low
+    icsp.send_command(com, b'LM')
+    # icsp_dat_output
+    icsp.send_command(com, b'LQ')
+    # icsp_dat_low
+    icsp.send_command(com, b'LR')
+
+    # icsp_mclr2_output
+    icsp.send_command(com, b'LH')
+    # icsp_mclr2_high
+    icsp.send_command(com, b'LJ')
+
+    # icsp_von_high
+    icsp.send_command(com, b'LU')
+
+
 def display_status(com):
+    """get line statsu and display"""
     status = icsp.get_status(com)
     icsp.sync(com)
 
@@ -199,6 +240,7 @@ def main():
     group.add_argument('-w', '--write', action='store_true', help='write firmware to target')
     group.add_argument('-r', '--read', action='store_true', help='Read target and save to file')
 
+    parser.add_argument('-1', '--mclr1', action='store_true', help="use mclr1 for 28 pin chips")
     parser.add_argument('-q', '--quiet', action='store_true', help="quiet mode. don't dump hex files")
     parser.add_argument('-e', '--enh', action='store_true', help='Enhanced midrange programming method')
     parser.add_argument('-f', '--fast', action='store_true', help='Fast mode.  Do minimal verification')
@@ -212,8 +254,6 @@ def main():
     args = parser.parse_args()
 
     args.write = not args.read and not args.id
-
-    programming_method = icsp.ENH if args.enh else icsp.MID
 
     if args.log:
         if os.path.exists(args.log):
@@ -236,6 +276,8 @@ def main():
             if not args.quiet:
                 print(args.filename)
                 print(file_firmware.display())
+    else:
+        file_firmware = None
 
     # Init comm (holds target in reset)
     print(f'Initializing communications on {args.port} at {args.baud} ...')
@@ -280,19 +322,31 @@ def main():
     print('Getting Version...')
     ver = icsp.get_version(com)
     print('KT150 firmware version:', ver)
-    print('Method: ', icsp.FAMILY_NAMES[programming_method])
 
     display_status(com)
-    print('Start...')
-    icsp.start(com)
+
+    if args.mclr1:
+        print('Start using MCLR1...')
+        send_start1(com)
+    else:
+        print('Start using MCLR2...')
+        send_start2(com)
+
     icsp.sync(com)
     display_status(com)
 
     print("\nDevice Info:")
-    device_id, device_rev, cfg1, cfg2, cal1, cal2 = read_info(com, programming_method)
+    chip_id, cfg1, cfg2, cal1, cal2 = read_info(com)
 
-    if device_id not in picdevice.PARAM:
-        print(" ID: %04X rev %x not in device list" % (device_id, device_rev))
+    # enhanced and midrange have different id/rev bits
+    for mask, shift in ((0x00F, 4), (0x01F, 5)):
+        device_id = chip_id >> shift
+        device_rev = chip_id & mask
+
+        if device_id in picdevice.PARAM:
+            break
+    else:
+        print(" ID: %04X not in device list" % chip_id)
 
         print("End...")
         icsp.release(com)
