@@ -35,6 +35,21 @@ class Port:
             self.reset()
         self._dtr = state
 
+    @property
+    def rts(self):
+        """return state of RTS output line"""
+        return False
+
+    @property
+    def dsr(self):
+        """return state of DSR input line"""
+        return False
+
+    @property
+    def cts(self):
+        """return state of CTS input line"""
+        return False
+
     def read(self, num_bytes: int):
         while len(self.inq) < num_bytes:
             self.run()

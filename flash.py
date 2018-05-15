@@ -3,7 +3,7 @@
 """
 Microchip ICSP driver
 
-$Id: flash.py 898 2018-04-28 01:54:19Z rnee $
+$Id: flash.py 910 2018-05-15 02:28:20Z rnee $
 
 Uses PIC 16F819 as the hardware interface via the standard BLOAD 4pin serial
 interface.
@@ -72,13 +72,12 @@ data using chr.  Pattern now matches other icsp_load_xxx functions.
 """
 
 import os
-import sys
 import time
 import argparse
 import serial
 
 import picdevice
-import intelhex as hexfile
+import intelhex
 import comm
 import icsp
 
@@ -90,6 +89,7 @@ DEFAULT_PORT = '/dev/ttyUSB0'
 
 # Communications settings
 
+MOCK = True
 DATA = 8
 TOUT = 1
 
@@ -120,7 +120,7 @@ def read_firmware(com, device_param):
 
     # Get config page data and tweak to read-only regions
     conf_data = icsp.read_config(com, device_param)
-    conf_page = hexfile.Page(conf_data)
+    conf_page = intelhex.Page(conf_data)
 
     # blank out any empty user ID locations
     for i in range(0, 4):
@@ -156,53 +156,24 @@ def start(com):
     icsp.send_command(com, b'UPUHUCUMLO')
 
 
-def main():
-    """main routine"""
-    parser = argparse.ArgumentParser(prog='flash', description='icsp programming tool.')
-    parser.add_argument('-p', '--port', default=DEFAULT_PORT, help='serial device')
-    parser.add_argument('-b', '--baud', default=DEFAULT_BAUD, help='baud rate')
-    parser.add_argument('-q', '--quiet', action='store_true', help="quiet mode. don't dump hex files")
-    parser.add_argument('-e', '--enh', action='store_true', help='Enhanced midrange programming method')
-    parser.add_argument('-f', '--fast', action='store_true', help='Fast mode.  Do minimal verification')
-    parser.add_argument('-r', '--read', action='store_true', help='Read target and save to filename')
-    parser.add_argument('-l', '--log', nargs='?', const='bload.log', default=None,
-                        help='Log all I/O to file')
-    parser.add_argument('-t', '--test', action='store_true', help='Test')
-    parser.add_argument('--version', action='version',
-                        version='$Id: flash.py 898 2018-04-28 01:54:19Z rnee $')
-    parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
-
-    args = parser.parse_args()
-
-    if args.log:
-        if os.path.exists(args.log):
-            os.unlink(args.log)
-        logf = open(args.log, 'a')
-    else:
-        logf = None
+def program(com):
+    """main programming routine"""
 
     # Check for a filename
     if args.filename is None:
         parser.print_help()
-        sys.exit()
+        return
 
     # unless we are reading out the chip firmware read a new file to load
     if not args.read:
         with open(args.filename) as fp:
-            file_firmware = hexfile.Hexfile()
+            file_firmware = intelhex.Hexfile()
             file_firmware.read(fp)
             if not args.quiet:
                 print(args.filename)
                 print(file_firmware.display())
     else:
         file_firmware = None
-
-    # Init comm (holds target in reset)
-    print('Initializing communications on {} {} ...'.format(args.port, args.baud))
-    ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
-
-    # create wrapper
-    com = comm.Comm(ser, logf)
 
     # Bring target out of reset
     print('Reset...')
@@ -218,10 +189,8 @@ def main():
             break
 
     if count == 0 or value != b'K':
-        com.close()
-
         print(f'[{count}, {value}] Could not find ICSP on {args.port}\n')
-        sys.exit()
+        return
 
     print('Connected...')
 
@@ -241,7 +210,7 @@ def main():
 
     # enhanced and midrange have different id/rev bits
     for mask, shift in ((0x00, 0), (0x00F, 4), (0x01F, 5)):
-        if chip_rev > 0x00 and chip_rev < 0x3FFF:
+        if 0x00 < chip_rev < 0x3FFF:
             device_rev = chip_rev
         else:
             device_rev = chip_id & mask
@@ -255,7 +224,7 @@ def main():
         print("End...")
         icsp.release(com)
 
-        sys.exit()
+        return
 
     device_param = picdevice.PARAM[device_id]
     device_name = device_param['name']
@@ -340,10 +309,50 @@ def main():
     print("End...")
     icsp.release(com)
 
-    com.close()
-
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(prog='flash', description='icsp programming tool.')
+    parser.add_argument('-p', '--port', default=DEFAULT_PORT, help='serial device')
+    parser.add_argument('-b', '--baud', default=DEFAULT_BAUD, help='baud rate')
+    parser.add_argument('-q', '--quiet', action='store_true', help="quiet mode. don't dump hex files")
+    parser.add_argument('-e', '--enh', action='store_true', help='Enhanced midrange programming method')
+    parser.add_argument('-f', '--fast', action='store_true', help='Fast mode.  Do minimal verification')
+    parser.add_argument('-r', '--read', action='store_true', help='Read target and save to filename')
+    parser.add_argument('-l', '--log', nargs='?', const='bload.log', default=None,
+                        help='Log all I/O to file')
+    parser.add_argument('-t', '--test', action='store_true', help='Test')
+    parser.add_argument('--version', action='version',
+                        version='$Id: flash.py 910 2018-05-15 02:28:20Z rnee $')
+    parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
+
+    args = parser.parse_args()
+
+    if args.log:
+        if os.path.exists(args.log):
+            os.unlink(args.log)
+        logf = open(args.log, 'a')
+    else:
+        logf = None
+
     start_time = time.time()
-    main()
+
+    print('Initializing communications on {} {} ...'.format(args.port, args.baud))
+    if not MOCK:
+        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
+
+    else:
+        import mock
+
+        # unless we are reading out the chip firmware read a new file to load
+        with open('mock.hex') as fp:
+            mock_firmware = intelhex.Hexfile()
+            mock_firmware.read(fp)
+
+        ser = mock.ICSPHost(mock_firmware)
+
+    # create wrapper
+    ser_com = comm.Comm(ser, logf)
+    program(ser_com)
+    ser.close()
+
     print(f"elapsed time: {time.time() - start_time:0.2f} seconds")
