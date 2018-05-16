@@ -72,9 +72,9 @@ data using chr.  Pattern now matches other icsp_load_xxx functions.
 """
 
 import os
+import sys
 import time
 import argparse
-import serial
 
 import picdevice
 import intelhex
@@ -180,7 +180,10 @@ def program(com):
     time.sleep(0.050)
     com.pulse_dtr(0.250)
     time.sleep(0.050)
-    com.flush()
+    # is this flush needed?  it clears the prompt char that is waiting to be 
+    # read that was produced by the reset.  Maybe it belongs prior to the dtr
+    # pulse to clean up garbage from open the serial port
+    # com.flush()
 
     # Trigger and look for prompt
     while True:
@@ -338,6 +341,8 @@ if __name__ == '__main__':
 
     print('Initializing communications on {} {} ...'.format(args.port, args.baud))
     if not MOCK:
+        import serial
+
         ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
 
     else:

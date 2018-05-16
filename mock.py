@@ -55,6 +55,7 @@ class Port:
             self.run()
             
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
+        print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}') 
         return ret
 
     def readline(self):
@@ -93,11 +94,12 @@ class Port:
 
         ret, self.outq = self.outq[:1], self.outq[1:]
         
+        print('ser_out in:', self.inq, 'out:', self.outq)
         return ret
 
     def ser_out(self, data: bytes):
         self.inq += data
-
+        print('ser_out in:', self.inq, 'out:', self.outq)
 
 class ICSP:
     def __init__(self):
@@ -105,9 +107,10 @@ class ICSP:
         
     def reset(self):
         self.ser_out(b'K')
+        print('reset in:', self.inq, 'out:', self.outq)
         
     def run(self):
-        # print('running addr:', hex(self.address), 'in:', self.inq, 'out:', self.outq)
+        print('running addr:', hex(self.address), 'in:', self.inq, 'out:', self.outq)
         while True:
             c = self.ser_get()
 
