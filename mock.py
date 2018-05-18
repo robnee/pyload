@@ -69,7 +69,7 @@ class Port:
             self.run()
             
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
-        print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}') 
+        # print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}') 
         return ret
 
     def readline(self):
@@ -125,11 +125,12 @@ class ICSP:
         
     def run(self):
         print('running addr:', hex(self.address), 'in:', self.inq, 'out:', self.outq)
-        while True:
+        while self.ser_avail():
+            # command
             c = self.ser_get()
 
             if c == b'K':  # sync
-                pass
+                self.ser_out(b'K')
 
             elif c == b'C':  # send command
                 a = self.ser_get()
@@ -175,9 +176,8 @@ class ICSP:
                 self.send_word(w)
 
             elif c == b'Q':  # query status
-                # send TRISA, TRISB, LATA, LATB
-                # send 4 x 0xff
-                pass
+                # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
+                self.serout(b'\x00\x00\x00\x00\x00\x00\x00\x00')
 
             elif c == b'L':
                 # Low-level functions.  Fetch sub command and assume it's valid
@@ -216,10 +216,6 @@ class ICSP:
             else:
                 self.ser_out(b'E')
 
-            self.ser_out(b'K')
-            
-            if not self.ser_avail():
-                break
         # print('done in:', self.inq, 'out:', self.outq)
 
         
@@ -242,12 +238,14 @@ class Target:
             return page[byte_num: byte_num + 2]
 
     def icsp_send_cmd(self, cmd: bytes):
-        if cmd == CMD_RESET_ADDRESS:
+        # TODO: check run state to ignore commands
+        print(f'addr: {self.address} cmd: {cmd}')
+        if cmd == CMD_LOAD_CONFIG:
             self.address = 0x8000
         elif cmd == CMD_INC:
             self.address += 1
         elif cmd == CMD_RESET_ADDRESS:
-            self.address += 0
+            self.address = 0
 
     def icsp_send_byte(self, b: bytes):
         pass
