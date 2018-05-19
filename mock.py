@@ -12,7 +12,7 @@ goes deeper and deeper.
 """
 
 import time
-import hexfile
+import intelhex
 
 
 CMD_LOAD_CONFIG = b'\x00'
@@ -65,11 +65,12 @@ class Port:
         return False
 
     def read(self, num_bytes: int):
+        print(f'read: {num_bytes}')
         while len(self.inq) < num_bytes:
             self.run()
             
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
-        # print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}') 
+        # print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}')
         return ret
 
     def readline(self):
@@ -108,12 +109,13 @@ class Port:
 
         ret, self.outq = self.outq[:1], self.outq[1:]
         
-        print('ser_out in:', self.inq, 'out:', self.outq)
+        print('ser_get 1 in:', self.inq, 'out:', self.outq)
         return ret
 
     def ser_out(self, data: bytes):
         self.inq += data
-        print('ser_out in:', self.inq, 'out:', self.outq)
+        print(f'ser_out: {data} in: {self.inq} out:', self.outq)
+
 
 class ICSP:
     def __init__(self):
@@ -124,11 +126,12 @@ class ICSP:
         print('reset in:', self.inq, 'out:', self.outq)
         
     def run(self):
-        print('running addr:', hex(self.address), 'in:', self.inq, 'out:', self.outq)
+        print('run addr:', hex(self.address), 'in:', self.inq, 'out:', self.outq)
         while self.ser_avail():
             # command
             c = self.ser_get()
-
+            print(f'cmd:{c}')
+            
             if c == b'K':  # sync
                 self.ser_out(b'K')
 
@@ -147,14 +150,15 @@ class ICSP:
                 a = self.ser_get()
                 b = self.ser_get()
                 num_words = int.from_bytes(a + b, 'little')
-
+                print(f'fetch: {num_words}')
+                
                 for _ in range(num_words):
                     if self.address == 0x8006:
                         chip_id = (0b10_0111_000 << 5) + 0b0_0101
                         self.ser_out(chip_id.to_bytes(2, 'little'))
                     else:
                         word = self.get_word(self.address)
-                        self.ser_out(word)
+                        self.ser_out(word if word else b'\xff\x3f')
                     self.address += 1
 
             elif c == b'G':  # fetch data words
@@ -227,19 +231,19 @@ class Target:
 
     def get_word(self, word_address: int):
         """access a two byte firmware word by word address"""
-        page_num, word_num = divmod(word_address, hexfile.PAGESIZE // 2)
+        page_num, word_num = divmod(word_address, intelhex.PAGELEN // 2)
         byte_num = word_num * 2
 
-        print(word_address, 'pn:', page_num, 'bn:', byte_num, 'wn:', word_num)
+        print(f'{word_address:x} pn: {page_num} bn:', byte_num, 'wn:', word_num)
 
-        if page_num < len(self.firmware):
-            page = bytes(self.firmware[page_num])
-
-            return page[byte_num: byte_num + 2]
+        page = self.firmware[page_num]
+        if page:
+            data = bytes(page)
+            return data[byte_num: byte_num + 2]
 
     def icsp_send_cmd(self, cmd: bytes):
         # TODO: check run state to ignore commands
-        print(f'addr: {self.address} cmd: {cmd}')
+        print(f'addr: {self.address:x} cmd: {cmd}')
         if cmd == CMD_LOAD_CONFIG:
             self.address = 0x8000
         elif cmd == CMD_INC:
@@ -258,6 +262,7 @@ class Target:
 
     def set_clk(self, state: bool):
         pass
+
 
 class ICSPHost(Port, ICSP, Target):
     def __init__(self, firmware):

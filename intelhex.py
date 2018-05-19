@@ -167,6 +167,7 @@ class Hexfile:
         self.page_list[page_num] = Page(page)
 
     def __getitem__(self, key):
+        """suppress IndexError"""
         try:
             return self.page_list[key]
         except IndexError:
