@@ -65,7 +65,8 @@ class Port:
         return False
 
     def read(self, num_bytes: int):
-        print(f'read: {num_bytes}')
+        """process bytes to generate output and return requested num of
+        results bytes to caller"""
         while len(self.inq) < num_bytes:
             self.run()
             
@@ -109,12 +110,12 @@ class Port:
 
         ret, self.outq = self.outq[:1], self.outq[1:]
         
-        print('ser_get 1 in:', self.inq, 'out:', self.outq)
+        # print('ser_get 1 in:', self.inq, 'out:', self.outq)
         return ret
 
     def ser_out(self, data: bytes):
         self.inq += data
-        print(f'ser_out: {data} in: {self.inq} out:', self.outq)
+        # print(f'ser_out: {data} in: {self.inq} out:', self.outq)
 
 
 class ICSP:
@@ -122,16 +123,18 @@ class ICSP:
         pass
 
     def reset(self):
+        """reset ICSP host"""
         self.ser_out(b'K')
         print('reset in:', self.inq, 'out:', self.outq)
         
     def run(self):
-        print('run addr:', hex(self.address), 'in:', self.inq, 'out:', self.outq)
+        """dispatch incoming commands"""
         while self.ser_avail():
             # command
             c = self.ser_get()
-            print(f'cmd:{c}')
+            print(f'cmd:{c} addr: {hex(self.address)} in: {self.inq} out: {self.outq}')
             
+            # dispatch
             if c == b'K':  # sync
                 self.ser_out(b'K')
 
@@ -150,7 +153,6 @@ class ICSP:
                 a = self.ser_get()
                 b = self.ser_get()
                 num_words = int.from_bytes(a + b, 'little')
-                print(f'fetch: {num_words}')
                 
                 for _ in range(num_words):
                     if self.address == 0x8006:
@@ -169,7 +171,7 @@ class ICSP:
                     self.address = 0xF000
 
                 for _ in range(num_words):
-                    self.ser_out(b'\xFF')
+                    self.ser_out(b'\xFF\x00')
                     self.address += 1
 
             elif c == b'P':  # pause
@@ -214,7 +216,7 @@ class ICSP:
             elif c == b'V':  # version
                 self.ser_out(b'V1.8\n')
 
-            elif c == 'Z':  # release
+            elif c == b'Z':  # release
                 pass
 
             else:
@@ -234,8 +236,6 @@ class Target:
         page_num, word_num = divmod(word_address, intelhex.PAGELEN // 2)
         byte_num = word_num * 2
 
-        print(f'{word_address:x} pn: {page_num} bn:', byte_num, 'wn:', word_num)
-
         page = self.firmware[page_num]
         if page:
             data = bytes(page)
@@ -243,7 +243,6 @@ class Target:
 
     def icsp_send_cmd(self, cmd: bytes):
         # TODO: check run state to ignore commands
-        print(f'addr: {self.address:x} cmd: {cmd}')
         if cmd == CMD_LOAD_CONFIG:
             self.address = 0x8000
         elif cmd == CMD_INC:
