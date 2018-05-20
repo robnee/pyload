@@ -65,10 +65,10 @@ class Port:
         return False
 
     def read(self, num_bytes: int):
-        """process bytes to generate output and return requested num of
-        results bytes to caller"""
-        while len(self.inq) < num_bytes:
-            self.run()
+        """read data from inq"""
+        if len(self.inq) < num_bytes:
+            print(f'read: {num_bytes} in: {self.inq} out: {self.outq}')
+            raise EOFError
             
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
         # print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}')
@@ -76,8 +76,9 @@ class Port:
 
     def readline(self):
         if len(self.inq) < 1:
-            self.run()
-            
+            print(f'readline: in: {self.inq} out: {self.outq}')
+            raise EOFError
+
         nl = self.inq.find(b'\n')
         if nl < 0:
             ret, self.inq = self.inq, bytes()
@@ -91,6 +92,7 @@ class Port:
         self.outq = bytes()
 
     def write(self, data: bytes):
+        print(f'write: {data} in: {self.inq} out: {self.outq}')
         self.outq += data
 
     def open(self):
@@ -105,6 +107,7 @@ class Port:
         return self.outq
         
     def ser_get(self):
+        # read a byte from outq
         if not self.ser_avail():
             raise EOFError
 
@@ -112,13 +115,14 @@ class Port:
         return ret
 
     def ser_out(self, data: bytes):
+        # add bytes to the inq
         self.inq += data
-        # print(f'ser_out: {data} in: {self.inq} out:', self.outq)
 
 
 class ICSP:
-    def __init__(self, port: Port, firmware:intelhex.Hexfile=None):
+    def __init__(self, port: Port, firmware: intelhex.Hexfile=None):
         self.port = port
+        self.target = Target(firmware)
 
     def reset(self):
         """reset ICSP host"""
@@ -127,105 +131,108 @@ class ICSP:
         
     def run(self):
         """dispatch incoming commands"""
-        while self.ser_avail():
-            # command
-            c = self.ser_get()
-            print(f'cmd:{c} addr: {hex(self.address)} in: {self.inq} out: {self.outq}')
-            
-            # dispatch
-            if c == b'K':  # sync
-                self.ser_out(b'K')
+        # command
+        c = self.ser_get()
+        print(f'cmd:{c} addr: {hex(self.address)} in: {self.inq} out: {self.outq}')
 
-            elif c == b'C':  # send command
-                a = self.ser_get()
-                self.icsp_send_cmd(a)
+        # dispatch
+        if c == b'K':  # sync
+            self.ser_out(b'K')
 
-            elif c == b'J':  # jump
-                l = self.ser_get()
-                h = self.ser_get()
-                c = int.from_bytes(l + h, byteorder='little')
-                for _ in range(c):
-                    self.icsp_send_cmd(CMD_INC)
+        elif c == b'C':  # send command
+            a = self.ser_get()
+            self.target.icsp_send_cmd(a)
 
-            elif c == b'F':  # fetch program words
-                a = self.ser_get()
-                b = self.ser_get()
-                num_words = int.from_bytes(a + b, 'little')
-                
-                for _ in range(num_words):
-                    if self.address == 0x8006:
-                        chip_id = (0b10_0111_000 << 5) + 0b0_0101
-                        self.ser_out(chip_id.to_bytes(2, 'little'))
-                    else:
-                        word = self.get_word(self.address)
-                        self.ser_out(word if word else b'\xff\x3f')
-                    self.address += 1
+        elif c == b'J':  # jump
+            low = self.ser_get()
+            high = self.ser_get()
+            c = int.from_bytes(low + high, byteorder='little')
+            for _ in range(c):
+                self.target.icsp_send_cmd(CMD_INC)
 
-            elif c == b'G':  # fetch data words
-                a = self.ser_get()
-                b = self.ser_get()
-                num_words = int.from_bytes(a + b, 'little')
-                if self.address < 0xF000:
-                    self.address = 0xF000
+        elif c == b'F':  # fetch program words
+            a = self.ser_get()
+            b = self.ser_get()
+            num_words = int.from_bytes(a + b, 'little')
 
-                for _ in range(num_words):
-                    self.ser_out(b'\xFF\x00')
-                    self.address += 1
+            for _ in range(num_words):
+                if self.address == 0x8006:
+                    chip_id = (0b10_0111_000 << 5) + 0b0_0101
+                    self.ser_out(chip_id.to_bytes(2, 'little'))
+                else:
+                    word = self.target.icsp_read_word(self.address)
+                    self.ser_out(word if word else b'\xff\x3f')
+                self.address += 1
 
-            elif c == b'P':  # pause
-                time.sleep(0.005)
+        elif c == b'G':  # fetch data words
+            a = self.ser_get()
+            b = self.ser_get()
+            num_words = int.from_bytes(a + b, 'little')
+            if self.address < 0xF000:
+                self.address = 0xF000
 
-            elif c == b'R':  # read single program word
-                w = self.icsp_read_word()
-                self.send_word(w)
+            for _ in range(num_words):
+                self.ser_out(b'\xFF\x00')
+                self.address += 1
 
-            elif c == b'Q':  # query status
-                # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
-                self.ser_out(b'\x00\x00\x00\x00\x00\x00\x00\x00')
+        elif c == b'P':  # pause
+            time.sleep(0.005)
 
-            elif c == b'L':
-                # Low-level functions.  Fetch sub command and assume it's valid
-                a = self.ser_get()
-                if a in (b'H', b'L', b'P', b'Q'):
-                    # these command need no implementation
-                    pass
-                elif a == b'I':
-                    self.set_mclr2(False)
-                elif a == b'J':
-                    self.set_mclr2(True)
-                elif a == b'M':
-                    self.set_clk(False)
-                elif a == b'N':
-                    self.set_clk(True)
-                elif a == b'O':
-                    self.set_clk(True)
-                    self.set_clk(False)
+        elif c == b'R':  # read single program word
+            w = self.target.icsp_read_word()
+            self.target.icsp_send_word(w)
 
-            elif c == b'U':  # send byte
-                b = self.ser_get()
-                self.icsp_send_byte(b)
+        elif c == b'Q':  # query status
+            # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
+            self.ser_out(b'\x00\x00\x00\x00\x00\x00\x00\x00')
 
-            elif c == b'W':  # send word
-                l = self.ser_get()
-                h = self.ser_get()
-                w = l + h
-                self.icsp_send_word(w)
-
-            elif c == b'V':  # version
-                self.ser_out(b'V1.8\n')
-
-            elif c == b'Z':  # release
+        elif c == b'L':
+            # Low-level functions.  Fetch sub command and assume it's valid
+            a = self.ser_get()
+            if a in (b'H', b'L', b'P', b'Q'):
+                # these command need no implementation
                 pass
+            elif a == b'I':
+                self.target.set_mclr2(False)
+            elif a == b'J':
+                self.target.set_mclr2(True)
+            elif a == b'M':
+                self.target.set_clk(False)
+            elif a == b'N':
+                self.target.set_clk(True)
+            elif a == b'O':
+                self.target.set_clk(True)
+                self.target.set_clk(False)
 
-            else:
-                self.ser_out(b'E')
+        elif c == b'U':  # send byte
+            b = self.ser_get()
+            self.target.icsp_send_byte(b)
+
+        elif c == b'W':  # send word
+            low = self.ser_get()
+            high = self.ser_get()
+            word = low + high
+            self.target.icsp_send_word(word)
+
+        elif c == b'V':  # version
+            self.ser_out(b'V1.8\n')
+
+        elif c == b'Z':  # release
+            pass
+
+        else:
+            self.ser_out(b'E')
 
     def ser_get(self):
         return self.port.ser_get()
 
     def ser_out(self, data: bytes):
         self.port.ser_out(data)
-        
+
+        # process the new data
+        while self.port.ser_avail():
+            self.run()
+
 
 class Target:
     def __init__(self, firmware):
@@ -233,7 +240,7 @@ class Target:
         self.address = 0
         self.run_state = "HALT"
 
-    def get_word(self, word_address: int):
+    def icsp_read_word(self, word_address: int):
         """access a two byte firmware word by word address"""
         page_num, word_num = divmod(word_address, intelhex.PAGELEN // 2)
         byte_num = word_num * 2
@@ -269,7 +276,7 @@ class ICSPHost(Port):
     def __init__(self, firmware):
         Port.__init__(self)
         
-        self.target = ICSP(self, firmware)
+        self.host = ICSP(self, firmware)
         
     def reset(self):
-        self.target.reset()
+        self.host.reset()
