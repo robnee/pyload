@@ -133,7 +133,7 @@ class ICSP:
         """dispatch incoming commands"""
         # command
         c = self.ser_get()
-        print(f'cmd:{c} addr: {hex(self.address)} in: {self.inq} out: {self.outq}')
+        print(f'cmd:{c} addr: {hex(self.address)} in: {self.port.inq} out: {self.port.outq}')
 
         # dispatch
         if c == b'K':  # sync
@@ -155,6 +155,7 @@ class ICSP:
             b = self.ser_get()
             num_words = int.from_bytes(a + b, 'little')
 
+            # TODO: move this to Target
             for _ in range(num_words):
                 if self.address == 0x8006:
                     chip_id = (0b10_0111_000 << 5) + 0b0_0101
@@ -168,6 +169,7 @@ class ICSP:
             a = self.ser_get()
             b = self.ser_get()
             num_words = int.from_bytes(a + b, 'little')
+            # TODO: move address set/get to Target
             if self.address < 0xF000:
                 self.address = 0xF000
 
@@ -237,12 +239,12 @@ class ICSP:
 class Target:
     def __init__(self, firmware):
         self.firmware = firmware
-        self.address = 0
+        self.word_address = 0
         self.run_state = "HALT"
 
-    def icsp_read_word(self, word_address: int):
+    def icsp_read_word(self):
         """access a two byte firmware word by word address"""
-        page_num, word_num = divmod(word_address, intelhex.PAGELEN // 2)
+        page_num, word_num = divmod(self.word_address, intelhex.PAGELEN // 2)
         byte_num = word_num * 2
 
         page = self.firmware[page_num]
@@ -253,11 +255,11 @@ class Target:
     def icsp_send_cmd(self, cmd: bytes):
         # TODO: check run state to ignore commands
         if cmd == CMD_LOAD_CONFIG:
-            self.address = 0x8000
+            self.word_address = 0x8000
         elif cmd == CMD_INC:
-            self.address += 1
+            self.word_address += 1
         elif cmd == CMD_RESET_ADDRESS:
-            self.address = 0
+            self.word_address = 0
 
     def icsp_send_byte(self, b: bytes):
         pass
