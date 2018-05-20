@@ -109,8 +109,6 @@ class Port:
             raise EOFError
 
         ret, self.outq = self.outq[:1], self.outq[1:]
-        
-        # print('ser_get 1 in:', self.inq, 'out:', self.outq)
         return ret
 
     def ser_out(self, data: bytes):
@@ -119,13 +117,13 @@ class Port:
 
 
 class ICSP:
-    def __init__(self):
-        pass
+    def __init__(self, port: Port, firmware:intelhex.Hexfile=None):
+        self.port = port
 
     def reset(self):
         """reset ICSP host"""
         self.ser_out(b'K')
-        print('reset in:', self.inq, 'out:', self.outq)
+        print('reset in:', self.port.inq, 'out:', self.port.outq)
         
     def run(self):
         """dispatch incoming commands"""
@@ -183,7 +181,7 @@ class ICSP:
 
             elif c == b'Q':  # query status
                 # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
-                self.serout(b'\x00\x00\x00\x00\x00\x00\x00\x00')
+                self.ser_out(b'\x00\x00\x00\x00\x00\x00\x00\x00')
 
             elif c == b'L':
                 # Low-level functions.  Fetch sub command and assume it's valid
@@ -222,11 +220,15 @@ class ICSP:
             else:
                 self.ser_out(b'E')
 
-        # print('done in:', self.inq, 'out:', self.outq)
+    def ser_get(self):
+        return self.port.ser_get()
 
+    def ser_out(self, data: bytes):
+        self.port.ser_out(data)
         
+
 class Target:
-    def __init__(self, firmware=None):
+    def __init__(self, firmware):
         self.firmware = firmware
         self.address = 0
         self.run_state = "HALT"
@@ -263,8 +265,11 @@ class Target:
         pass
 
 
-class ICSPHost(Port, ICSP, Target):
+class ICSPHost(Port):
     def __init__(self, firmware):
         Port.__init__(self)
-        ICSP.__init__(self)
-        Target.__init__(self, firmware)
+        
+        self.target = ICSP(self, firmware)
+        
+    def reset(self):
+        self.target.reset()
