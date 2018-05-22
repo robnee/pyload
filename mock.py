@@ -106,13 +106,18 @@ class Port:
     def ser_avail(self):
         return self.outq
         
-    def ser_get(self):
+    def ser_get(self) -> bytes:
         # read a byte from outq
         if not self.ser_avail():
             raise EOFError
 
         ret, self.outq = self.outq[:1], self.outq[1:]
         return ret
+
+    def ser_get_word(self) -> int:
+        low = self.ser_get()
+        high = self.ser_get()
+        return int.from_bytes(low + high, byteorder='little')
 
     def ser_out(self, data: bytes):
         # add bytes to the inq
@@ -134,7 +139,7 @@ class ICSP:
         while self.ser_avail():
             # command
             c = self.ser_get()
-            print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
+            # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
     
             # dispatch
             if c == b'K':  # sync
@@ -145,39 +150,33 @@ class ICSP:
                 self.target.icsp_send_cmd(a)
     
             elif c == b'J':  # jump
-                low = self.ser_get()
-                high = self.ser_get()
-                c = int.from_bytes(low + high, byteorder='little')
-                for _ in range(c):
+                num_words = self.ser_get_word()
+                
+                for _ in range(num_words):
                     self.target.icsp_send_cmd(CMD_INC)
     
             elif c == b'F':  # fetch program words
-                a = self.ser_get()
-                b = self.ser_get()
-                num_words = int.from_bytes(a + b, 'little')
+                num_words = self.ser_get_word()
     
                 for _ in range(num_words):
                     self.target.icsp_send_cmd(CMD_READ_PGM)
-                    word = self.target.icsp_read_word()
-                    self.ser_out(word if word else b'\xff\x3f')
+                    word = self.target.icsp_get_word()
+                    self.ser_out(word)
                     self.target.icsp_send_cmd(CMD_INC)
     
             elif c == b'G':  # fetch data words
-                a = self.ser_get()
-                b = self.ser_get()
-                num_words = int.from_bytes(a + b, 'little')
+                num_words = self.ser_get_word()
     
                 for _ in range(num_words):
                     self.target.icsp_send_cmd(CMD_READ_DATA)
                     self.ser_out(b'\xFF\x00')
                     self.target.icsp_send_cmd(CMD_INC)
-                    
     
             elif c == b'P':  # pause
                 time.sleep(0.005)
     
             elif c == b'R':  # read single program word
-                w = self.target.icsp_read_word()
+                w = self.target.icsp_get_word()
                 self.target.icsp_send_word(w)
     
             elif c == b'Q':  # query status
@@ -207,9 +206,7 @@ class ICSP:
                 self.target.icsp_send_byte(b)
     
             elif c == b'W':  # send word
-                low = self.ser_get()
-                high = self.ser_get()
-                word = low + high
+                word = self.ser_get_word() 
                 self.target.icsp_send_word(word)
     
             elif c == b'V':  # version
@@ -221,11 +218,14 @@ class ICSP:
             else:
                 self.ser_out(b'E')
 
-    def ser_avail(self):
+    def ser_avail(self) -> bytes:
         return self.port.ser_avail()
 
-    def ser_get(self):
+    def ser_get(self) -> bytes:
         return self.port.ser_get()
+        
+    def ser_get_word(self) -> int:
+        return self.port.ser_get_word()
 
     def ser_out(self, data: bytes):
         self.port.ser_out(data)
@@ -235,6 +235,7 @@ class Target:
     def __init__(self, firmware):
         self.firmware = firmware
         self.word_address = 0
+        self.word = b''
         self.run_state = "HALT"
 
     def icsp_read_word(self):
@@ -243,7 +244,7 @@ class Target:
         # chip id and revision aren't in firmware file
         if self.word_address == 0x8006:
             chip_id = (0b10_0111_000 << 5) + 0b0_0101
-            return chip_id.to_bytes(2, 'little')
+            self.word = chip_id.to_bytes(2, 'little')
         else:
             page_num, word_num = divmod(self.word_address, intelhex.PAGELEN // 2)
             byte_num = word_num * 2
@@ -251,15 +252,17 @@ class Target:
             page = self.firmware[page_num]
             if page:
                 data = bytes(page)
-                return data[byte_num: byte_num + 2]        
+                self.word = data[byte_num: byte_num + 2]
+            else:
+                self.word = b'\xff\x3f'
 
     def icsp_send_cmd(self, cmd: bytes):
+        # print(f'cmd: {cmd} addr: {self.word_address: X} word: {self.word}')
         # TODO: check run state to ignore commands
         if cmd == CMD_LOAD_CONFIG:
             self.word_address = 0x8000
         elif cmd == CMD_READ_PGM:
-            if self.word_address >= 0x8000:
-                self.word_address = 0x0
+            self.icsp_read_word()
         elif cmd == CMD_READ_DATA:
             if self.word_address < 0xf000:
                 self.word_address = 0xf000
@@ -267,6 +270,9 @@ class Target:
             self.word_address += 1
         elif cmd == CMD_RESET_ADDRESS:
             self.word_address = 0
+
+    def icsp_get_word(self) -> bytes:
+        return self.word
 
     def icsp_send_byte(self, b: bytes):
         pass
@@ -291,6 +297,5 @@ class ICSPHost(Port):
         self.host.reset()
         
     def write(self, data: bytes):
-        print(f'write: {data} in: {self.inq} out: {self.outq}')
         super().write(data)
         self.host.run()
