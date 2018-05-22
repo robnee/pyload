@@ -20,21 +20,21 @@ The Host controller understands the following commands
 
 Sn	- Start programming.  Hold MCLR on target low and send MCHP signiture
 En	- End programming.  Release MCLR on target
-X		- Reset the Address counter to zero
-I		- Increment the Address counter
-Jnn   - Jump the Address counter a given number of locations
+X	- Reset the Address counter to zero
+I	- Increment the Address counter
+Jnn - Jump the Address counter a given number of locations
 Bn	- Bulk erase program memory
 An	- Bulk erase data memory
 Cnn	- Set address to 8000h and Load config word
 Lnn	- Load program word at current address
 Mnn	- Load program word at current address and increment program counter
 Pn	- Program commit
-R		- Read program memory
+R	- Read program memory
 Fnn	- Fetch program memory words
 Gnn	- Get data memory words
 Dn	- Load data byte for programming
-V		- ICSP version
-K		- NOP.  Just returns the K prompt
+V	- ICSP version
+K	- NOP.  Just returns the K prompt
 
 V0.1 04/18/2013
 
