@@ -74,38 +74,10 @@ import os
 import sys
 import time
 import argparse
-import importlib
-
-
-class ImportHack:
-    """Fix iOS external file importing"""
-    def __init__(self):
-        # update or append instance
-        for i, mp in enumerate(sys.meta_path):
-            if mp.__class__.__name__ == 'ImportHack':
-                sys.meta_path[i] = self
-                return
-        
-        sys.meta_path.append(self)
-
-    @staticmethod
-    def find_spec(fullname, path, target):
-        """Try to open file and return a Finder"""
-        loc = __file__.rpartition('/')[0] + '/' + fullname + '.py'
-        try:
-            # test if target exists in same location without use of additional imports
-            f = open(loc)
-            f.close()
-            return importlib.util.spec_from_file_location(fullname, loc)
-        except:
-            pass
-
-# ImportHack()
-
 
 import serial
 import picdevice
-import intelhex as hexfile
+import intelhex
 import mock
 import comm
 import icsp
@@ -152,7 +124,7 @@ def read_firmware(com, device_param):
 
     # Get config page data and tweak to read-only regions
     conf_data = icsp.read_config(com, device_param)
-    conf_page = hexfile.Page(conf_data)
+    conf_page = intelhex.Page(conf_data)
 
     # blank out any empty user ID locations
     for i in range(0, 4):
@@ -271,7 +243,7 @@ def main():
     # unless we are reading out the chip firmware read a new file to load
     if not args.read and not args.id:
         with open(args.filename) as fp:
-            file_firmware = hexfile.Hexfile()
+            file_firmware = intelhex.Hexfile()
             file_firmware.read(fp)
             if not args.quiet:
                 print(args.filename)
@@ -283,7 +255,7 @@ def main():
     print(f'Initializing communications on {args.port} at {args.baud} ...')
     if MOCK:
         # read firmware to simulate target and load and create mock target
-        firmware = hexfile.Hexfile()
+        firmware = intelhex.Hexfile()
         with open(TMP + 'icsp.hex') as fp:
             firmware.read(fp)
 
