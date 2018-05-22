@@ -53,7 +53,7 @@ Z
 """
 
 import sys
-import intelhex as hexfile
+import intelhex
 import comm
 from typing import Iterable
 
@@ -230,17 +230,17 @@ def read_pages(com: comm.Comm, cmd_code: bytes, page_nums: Iterable[int]):
     return page_list
 
 
-def read_program(com: comm.Comm, device) -> hexfile.Hexfile:
+def read_program(com: comm.Comm, device) -> intelhex.Hexfile:
     """read all program pages"""
     page_nums = range(0, device['max_page'] + 1)
     page_list = read_pages(com, CMD_READ_PAGE, page_nums)
 
-    pages = hexfile.Hexfile()
+    pages = intelhex.Hexfile()
 
     # Read all pages and create a list
     for page_num, data in zip(page_nums, page_list):
         if data:
-            page = hexfile.Page(data)
+            page = intelhex.Page(data)
 
             # Remove NULL words
             for offset in range(0, len(page)):
@@ -255,7 +255,7 @@ def read_program(com: comm.Comm, device) -> hexfile.Hexfile:
 
 def read_data(com: comm.Comm, device):
     """read all data pages"""
-    pages = hexfile.Hexfile()
+    pages = intelhex.Hexfile()
 
     # if data region is not defined then return an empty list
     if device['min_data'] or device['max_data']:
@@ -264,7 +264,7 @@ def read_data(com: comm.Comm, device):
 
         for page_num, data in zip(page_nums, data_list):
             if data:
-                page = hexfile.Page(data)
+                page = intelhex.Page(data)
 
                 for offset in range(0, len(page)):
                     if page[offset] == 0x00FF:
@@ -368,7 +368,7 @@ def program(com: comm.Comm):
 
 def load_config(com: comm.Comm, data=b'\x00\x00'):
     """Switch to config segment and load a word"""
-    #send_command(com, b'C' + data)
+    # send_command(com, b'C' + data)
     send_command(com, CMD_LOAD_CONFIG)
     send_command(com, CMD_SEND_WORD, data)
 
