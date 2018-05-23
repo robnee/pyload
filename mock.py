@@ -137,6 +137,8 @@ class ICSP:
     def run(self):
         """dispatch incoming commands"""
         while self.ser_avail():
+            time.sleep(0.005)
+
             # command
             c = self.ser_get()
             # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
@@ -169,7 +171,8 @@ class ICSP:
     
                 for _ in range(num_words):
                     self.target.icsp_send_cmd(CMD_READ_DATA)
-                    self.ser_out(b'\xFF\x00')
+                    word = self.target.icsp_get_word()
+                    self.ser_out(word)
                     self.target.icsp_send_cmd(CMD_INC)
 
             elif c == b'P':  # pause
@@ -207,7 +210,7 @@ class ICSP:
     
             elif c == b'W':  # send word
                 word = self.ser_get_word() 
-                self.target.icsp_send_word(word)
+                # self.target.icsp_send_word(word)
     
             elif c == b'V':  # version
                 self.ser_out(b'V1.8\n')
@@ -236,9 +239,10 @@ class Target:
         self.firmware = firmware
         self.word_address = 0
         self.word = b''
+        self.latch = b''
         self.run_state = "HALT"
 
-    def icsp_read_word(self):
+    def icsp_read_word(self, msb_mask: int):
         """access a two byte firmware word by word address"""
         
         # chip id and revision aren't in firmware file
@@ -253,36 +257,42 @@ class Target:
             if page:
                 data = bytes(page)
                 self.word = data[byte_num: byte_num + 2]
-                self.word = bytes([self.word[0], min(self.word[1], 0x3f)])
-                
             else:
-                self.word = b'\xff\x3f'
+                self.word = b'\xff\xff'
 
-            # print(f'read: {self.word_address: x} {page_num: x} {word_num} {self.word}')
+            # mask off unused bits
+            self.word = bytes([self.word[0], self.word[1] & msb_mask])
 
+    def icsp_load_word(self, word):
+        # TODO: save word to latches
+        pass
+        
     def icsp_send_cmd(self, cmd: bytes):
         # print(f'cmd: {cmd} addr: {self.word_address: X} word: {self.word}')
         # TODO: check run state to ignore commands
         if cmd == CMD_LOAD_CONFIG:
             self.word_address = 0x8000
+        elif cmd == CMD_LOAD_PGM:
+            pass
+        elif cmd == CMD_LOAD_DATA:
+            pass
         elif cmd == CMD_READ_PGM:
-            self.icsp_read_word()
+            self.icsp_read_word(0x3f)
         elif cmd == CMD_READ_DATA:
             if self.word_address < 0xf000:
                 self.word_address = 0xf000
+            self.icsp_read_word(0x00)
         elif cmd == CMD_INC:
             self.word_address += 1
         elif cmd == CMD_RESET_ADDRESS:
             self.word_address = 0
 
+    def icsp_send_byte(self, b: bytes):
+        # TODO: implement start state management
+        pass
+        
     def icsp_get_word(self) -> bytes:
         return self.word
-
-    def icsp_send_byte(self, b: bytes):
-        pass
-
-    def icsp_send_word(self, w: bytes):
-        pass
 
     def set_mclr2(self, state: bool):
         pass
