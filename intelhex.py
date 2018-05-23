@@ -73,6 +73,8 @@ class Page:
     def __init__(self, s=None):
         if s is None:
             self.page = [None] * PAGELEN
+        elif type(s) == int:
+        	  self.page = [None] * s
         elif type(s) == str:
             if len(s) > PAGELEN * 4:
                 raise ValueError(f'string len { len(s) } greater than {PAGELEN * 4} hex digits')

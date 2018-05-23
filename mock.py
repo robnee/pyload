@@ -238,8 +238,9 @@ class Target:
     def __init__(self, firmware):
         self.firmware = firmware
         self.word_address = 0
+        self.latch_count = 8
         self.word = b''
-        self.latch = b''
+        self.latch = intelhex.Page(self.latch_count)
         self.run_state = "HALT"
 
     def icsp_read_word(self, msb_mask: int):
