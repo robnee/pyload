@@ -171,7 +171,7 @@ class ICSP:
                     self.target.icsp_send_cmd(CMD_READ_DATA)
                     self.ser_out(b'\xFF\x00')
                     self.target.icsp_send_cmd(CMD_INC)
-    
+
             elif c == b'P':  # pause
                 time.sleep(0.005)
     
@@ -246,15 +246,19 @@ class Target:
             chip_id = (0b10_0111_000 << 5) + 0b0_0101
             self.word = chip_id.to_bytes(2, 'little')
         else:
-            page_num, word_num = divmod(self.word_address, intelhex.PAGELEN // 2)
+            page_num, word_num = divmod(self.word_address, intelhex.PAGELEN)
             byte_num = word_num * 2
             
             page = self.firmware[page_num]
             if page:
                 data = bytes(page)
                 self.word = data[byte_num: byte_num + 2]
+                self.word = bytes([self.word[0], min(self.word[1], 0x3f)])
+                
             else:
                 self.word = b'\xff\x3f'
+
+            # print(f'read: {self.word_address: x} {page_num: x} {word_num} {self.word}')
 
     def icsp_send_cmd(self, cmd: bytes):
         # print(f'cmd: {cmd} addr: {self.word_address: X} word: {self.word}')
