@@ -125,9 +125,9 @@ class Port:
 
 
 class ICSP:
-    def __init__(self, port: Port, firmware: intelhex.Hexfile=None):
+    def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
         self.port = port
-        self.target = Target(firmware)
+        self.target = Target(device, firmware)
 
     def reset(self):
         """reset ICSP host"""
@@ -209,8 +209,8 @@ class ICSP:
                 self.target.icsp_send_byte(b)
     
             elif c == b'W':  # send word
-                word = self.ser_get_word() 
-                # self.target.icsp_send_word(word)
+                word = self.ser_get_word()
+                self.target.icsp_load_word(word)
     
             elif c == b'V':  # version
                 self.ser_out(b'V1.8\n')
@@ -235,9 +235,10 @@ class ICSP:
 
 
 class Target:
-    def __init__(self, firmware):
+    def __init__(self, device, firmware):
         self.firmware = firmware
         self.word_address = 0
+        # TODO: look up device parameters from picdevice.py
         self.latch_count = 8
         self.word = b''
         self.latch = intelhex.Page(self.latch_count)
@@ -265,8 +266,13 @@ class Target:
             self.word = bytes([self.word[0], self.word[1] & msb_mask])
 
     def icsp_load_word(self, word):
-        # TODO: save word to latches
-        pass
+        bn = self.word_address % self.latch_count
+        self.latch[bn] = word
+        
+        print('latch:', self.latch)
+
+    def icsp_program(self):
+        self.latch = intelhex.Page(self.latch_count)
         
     def icsp_send_cmd(self, cmd: bytes):
         # print(f'cmd: {cmd} addr: {self.word_address: X} word: {self.word}')
@@ -283,6 +289,8 @@ class Target:
             if self.word_address < 0xf000:
                 self.word_address = 0xf000
             self.icsp_read_word(0x00)
+        elif cmd == CMD_PROGRAM_INT:
+            self.icsp_program()
         elif cmd == CMD_INC:
             self.word_address += 1
         elif cmd == CMD_RESET_ADDRESS:
@@ -303,10 +311,10 @@ class Target:
 
 
 class ICSPHost(Port):
-    def __init__(self, firmware):
+    def __init__(self, device: str, firmware):
         Port.__init__(self)
         
-        self.host = ICSP(self, firmware)
+        self.host = ICSP(self, device, firmware)
         
     def reset(self):
         self.host.reset()

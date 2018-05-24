@@ -353,7 +353,7 @@ if __name__ == '__main__':
             mock_firmware = intelhex.Hexfile()
             mock_firmware.read(fp)
 
-        ser = mock.ICSPHost(mock_firmware)
+        ser = mock.ICSPHost('12F1822', mock_firmware)
 
     # create wrapper
     ser_com = comm.Comm(ser, logf)
