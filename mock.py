@@ -13,6 +13,7 @@ goes deeper and deeper.
 
 import time
 import intelhex
+import picdevice
 
 
 CMD_LOAD_CONFIG = b'\x00'
@@ -235,15 +236,22 @@ class ICSP:
 
 
 class Target:
-    def __init__(self, device, firmware):
+    def __init__(self, device_name, firmware):
         self.firmware = firmware
         self.word_address = 0
-        # TODO: look up device parameters from picdevice.py
-        self.latch_count = 8
         self.word = b''
-        self.latch = intelhex.Page(self.latch_count)
         self.run_state = "HALT"
+        
+        self.device = picdevice.find_by_name(device_name)
+        self._clear_latches()
 
+    @property
+    def _latch_count(self):
+        return self.device['num_latches']
+
+    def _clear_latches(self):
+        self.latch = intelhex.Page(self._latch_count)
+        
     def icsp_read_word(self, msb_mask: int):
         """access a two byte firmware word by word address"""
         
@@ -266,22 +274,25 @@ class Target:
             self.word = bytes([self.word[0], self.word[1] & msb_mask])
 
     def icsp_load_word(self, word):
-        bn = self.word_address % self.latch_count
+        bn = self.word_address % self._latch_count
         self.latch[bn] = word
         
         print('latch:', self.latch)
 
     def icsp_program(self):
-        self.latch = intelhex.Page(self.latch_count)
+        # TODO: copy latches to firmware
+        self._clear_latches()
         
-    def icsp_send_cmd(self, cmd: bytes):
+    def icsp_send_cmd(self, cmd: bytes, arg: bytes):
         # print(f'cmd: {cmd} addr: {self.word_address: X} word: {self.word}')
         # TODO: check run state to ignore commands
         if cmd == CMD_LOAD_CONFIG:
             self.word_address = 0x8000
         elif cmd == CMD_LOAD_PGM:
+            # TODO: implement address logic
             pass
         elif cmd == CMD_LOAD_DATA:
+            # TODO: implement address logic
             pass
         elif cmd == CMD_READ_PGM:
             self.icsp_read_word(0x3f)
@@ -295,6 +306,8 @@ class Target:
             self.word_address += 1
         elif cmd == CMD_RESET_ADDRESS:
             self.word_address = 0
+            
+        # TODO: bulk erase commands
 
     def icsp_send_byte(self, b: bytes):
         # TODO: implement start state management
