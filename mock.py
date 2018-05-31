@@ -239,6 +239,7 @@ class Target:
     def __init__(self, device_name, firmware):
         self.firmware = firmware
         self.word_address = 0
+        self.cmd = None
         self.word = b''
         self.run_state = "HALT"
         
@@ -251,7 +252,20 @@ class Target:
 
     def _clear_latches(self):
         self.latch = intelhex.Page(self._latch_count)
+
+    def _run(self):
+        """ process cmd/word instructions """
+
+        if self.cmd == CMD_LOAD_CONFIG or self.cmd == CMD_LOAD_PGM:
+            bn = self.word_address % self._latch_count
+            self.latch[bn] = self.word
         
+            print('latch:', self.latch)
+        else:
+            raise ValueError('bad cmd', self.cmd)
+
+        self.cmd = None
+              
     def icsp_read_word(self, msb_mask: int):
         """access a two byte firmware word by word address"""
         
@@ -274,26 +288,28 @@ class Target:
             self.word = bytes([self.word[0], self.word[1] & msb_mask])
 
     def icsp_load_word(self, word):
-        bn = self.word_address % self._latch_count
-        self.latch[bn] = word
-        
-        print('latch:', self.latch)
+        self.word = word
+        self._run()
 
     def icsp_program(self):
         # TODO: copy latches to firmware
         self._clear_latches()
-        
-    def icsp_send_cmd(self, cmd: bytes, arg: bytes):
+
+    def icsp_send_cmd(self, cmd: bytes):
+        # there should be no pending commands when receiving a new one
+        if self.cmd != None:
+            raise ValueError('pending cmd')
+
         # print(f'cmd: {cmd} addr: {self.word_address: X} word: {self.word}')
         # TODO: check run state to ignore commands
         if cmd == CMD_LOAD_CONFIG:
+            self.cmd = cmd
             self.word_address = 0x8000
         elif cmd == CMD_LOAD_PGM:
-            # TODO: implement address logic
-            pass
+            self.cmd = cmd
         elif cmd == CMD_LOAD_DATA:
+            self.cmd = cmd
             # TODO: implement address logic
-            pass
         elif cmd == CMD_READ_PGM:
             self.icsp_read_word(0x3f)
         elif cmd == CMD_READ_DATA:
