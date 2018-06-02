@@ -150,38 +150,38 @@ class ICSP:
     
             elif c == b'C':  # send command
                 a = self.ser_get()
-                self.target.icsp_send_cmd(a)
+                self.target.send_cmd(a)
     
             elif c == b'J':  # jump
                 num_words = self.ser_get_word()
                 
                 for _ in range(num_words):
-                    self.target.icsp_send_cmd(CMD_INC)
+                    self.target.send_cmd(CMD_INC)
     
             elif c == b'F':  # fetch program words
                 num_words = self.ser_get_word()
     
                 for _ in range(num_words):
-                    self.target.icsp_send_cmd(CMD_READ_PGM)
-                    word = self.target.icsp_get_word()
+                    self.target.send_cmd(CMD_READ_PGM)
+                    word = self.target.get_word()
                     self.ser_out(word)
-                    self.target.icsp_send_cmd(CMD_INC)
+                    self.target.send_cmd(CMD_INC)
     
             elif c == b'G':  # fetch data words
                 num_words = self.ser_get_word()
     
                 for _ in range(num_words):
-                    self.target.icsp_send_cmd(CMD_READ_DATA)
-                    word = self.target.icsp_get_word()
+                    self.target.send_cmd(CMD_READ_DATA)
+                    word = self.target.get_word()
                     self.ser_out(word)
-                    self.target.icsp_send_cmd(CMD_INC)
+                    self.target.send_cmd(CMD_INC)
 
             elif c == b'P':  # pause
                 time.sleep(0.005)
     
             elif c == b'R':  # read single program word
-                w = self.target.icsp_get_word()
-                self.target.icsp_send_word(w)
+                w = self.target.get_word()
+                self.target.send_word(w)
     
             elif c == b'Q':  # query status
                 # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
@@ -207,11 +207,11 @@ class ICSP:
     
             elif c == b'U':  # send byte
                 b = self.ser_get()
-                self.target.icsp_send_byte(b)
+                self.target.send_byte(b)
     
             elif c == b'W':  # send word
                 word = self.ser_get_word()
-                self.target.icsp_load_word(word)
+                self.target.send_arg(word)
     
             elif c == b'V':  # version
                 self.ser_out(b'V1.8\n')
@@ -252,21 +252,14 @@ class Target:
 
     def _clear_latches(self):
         self.latch = intelhex.Page(self._latch_count)
-
-    def _run(self):
-        """ process cmd/word instructions """
-
-        if self.cmd == CMD_LOAD_CONFIG or self.cmd == CMD_LOAD_PGM:
-            bn = self.word_address % self._latch_count
-            self.latch[bn] = self.word
         
-            print('latch:', self.latch)
-        else:
-            raise ValueError('bad cmd', self.cmd)
+    def _load_latch(self):
+        bn = self.word_address % self._latch_count
+        self.latch[bn] = self.word
+    
+        print('latch:', self.latch)
 
-        self.cmd = None
-              
-    def icsp_read_word(self, msb_mask: int):
+    def _read_word(self, msb_mask: int):
         """access a two byte firmware word by word address"""
         
         # chip id and revision aren't in firmware file
@@ -287,49 +280,77 @@ class Target:
             # mask off unused bits
             self.word = bytes([self.word[0], self.word[1] & msb_mask])
 
-    def icsp_load_word(self, word):
-        self.word = word
-        self._run()
-
-    def icsp_program(self):
+    def _program(self):
         # TODO: copy latches to firmware
         self._clear_latches()
 
-    def icsp_send_cmd(self, cmd: bytes):
-        # there should be no pending commands when receiving a new one
-        if self.cmd != None:
-            raise ValueError('pending cmd')
+    def _erase_pgm(self):
+        pass
+    
+    def _erase_data(self):
+        pass
+        
+    def _run(self):
+        """ process cmd/word instructions """
 
         # print(f'cmd: {cmd} addr: {self.word_address: X} word: {self.word}')
         # TODO: check run state to ignore commands
-        if cmd == CMD_LOAD_CONFIG:
-            self.cmd = cmd
+        if self.cmd == CMD_LOAD_CONFIG:
             self.word_address = 0x8000
-        elif cmd == CMD_LOAD_PGM:
-            self.cmd = cmd
-        elif cmd == CMD_LOAD_DATA:
-            self.cmd = cmd
-            # TODO: implement address logic
-        elif cmd == CMD_READ_PGM:
-            self.icsp_read_word(0x3f)
-        elif cmd == CMD_READ_DATA:
+            self._load_latch()
+        elif self.cmd == CMD_LOAD_PGM:
+            self._load_latch()
+        elif self.cmd == CMD_LOAD_DATA:
             if self.word_address < 0xf000:
                 self.word_address = 0xf000
-            self.icsp_read_word(0x00)
-        elif cmd == CMD_PROGRAM_INT:
-            self.icsp_program()
-        elif cmd == CMD_INC:
+            self._load_latch()
+        elif self.cmd == CMD_READ_PGM:
+            self._read_word(0x3f)
+        elif self.cmd == CMD_READ_DATA:
+            if self.word_address < 0xf000:
+                self.word_address = 0xf000
+            self._read_word(0x00)
+        elif self.cmd == CMD_PROGRAM_INT:
+            self._program()
+        elif self.cmd == CMD_ERASE_PGM:
+            self._erase_pgm()
+        elif self.cmd == CMD_ERASE_DATA:
+            self._erase_data()
+        elif self.cmd == CMD_INC:
             self.word_address += 1
-        elif cmd == CMD_RESET_ADDRESS:
+        elif self.cmd == CMD_RESET_ADDRESS:
             self.word_address = 0
-            
-        # TODO: bulk erase commands
+        else:
+            raise RuntimeError('invalid cmd:', self.cmd)
+        
+        self.cmd = None
+              
+    def send_cmd(self, cmd: bytes):
+        """ send icsp command.  equivalent to clocking in the first six bits """
 
-    def icsp_send_byte(self, b: bytes):
+        # there should be no pending commands when receiving a new one
+        if self.cmd is not None:
+            raise ValueError(f'sending cmd {cmd} pending {self.cmd}')
+
+        self.cmd = cmd
+
+        # commands that don't require args can be dispatched
+        if self.cmd in (CMD_READ_PGM, CMD_READ_DATA, CMD_INC, CMD_PROGRAM_EXT,
+                        CMD_ERASE_PGM, CMD_ERASE_DATA, CMD_PROGRAM_INT,
+                        CMD_PROGRAM_EXT, CMD_PROGRAM_END, CMD_RESET_ADDRESS):
+            self._run()
+
+    def send_arg(self, word):
+        """ send optional word portion of command and execute it """
+
+        self.word = word
+        self._run()
+
+    def send_byte(self, b: bytes):
         # TODO: implement start state management
         pass
-        
-    def icsp_get_word(self) -> bytes:
+
+    def get_word(self) -> bytes:
         return self.word
 
     def set_mclr2(self, state: bool):
