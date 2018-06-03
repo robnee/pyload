@@ -138,7 +138,7 @@ class ICSP:
     def run(self):
         """dispatch incoming commands"""
         while self.ser_avail():
-            time.sleep(0.005)
+            time.sleep(0.003)
 
             # command
             c = self.ser_get()
@@ -251,13 +251,11 @@ class Target:
         return self.device['num_latches']
 
     def _clear_latches(self):
-        self.latch = intelhex.Page(self._latch_count)
+        self.latch = [None] * self._latch_count
         
     def _load_latch(self):
-        bn = self.word_address % self._latch_count
+        pn, bn = divmod(self.word_address, self._latch_count)
         self.latch[bn] = self.word
-    
-        print('latch:', self.latch)
 
     def _read_word(self, msb_mask: int):
         """access a two byte firmware word by word address"""
@@ -281,14 +279,34 @@ class Target:
             self.word = bytes([self.word[0], self.word[1] & msb_mask])
 
     def _program(self):
-        # TODO: copy latches to firmware
+        # compute page, offset and latch address
+        page_num, page_offset = divmod(self.word_address, intelhex.PAGELEN)
+        word_offset = (page_offset // self._latch_count) * self._latch_count
+  
+        if not self.firmware[page_num]:
+            self.firmware[page_num] = intelhex.Page()
+
+        for bn in range(self._latch_count):
+            if self.latch[bn] is not None:
+                self.firmware[page_num][word_offset + bn] = self.latch[bn]
+
         self._clear_latches()
 
     def _erase_pgm(self):
-        pass
+        # check if address points to program or config memory
+        for page_num in range(self.device['max_page'] + 1):
+            self.firmware[page_num] = None
+
+        # clear user id words 
+        page_num = self.device['conf_page']
+        self.firmware[page_num][0] = None
+        self.firmware[page_num][1] = None
+        self.firmware[page_num][2] = None
+        self.firmware[page_num][3] = None
     
     def _erase_data(self):
-        pass
+        for page_num in range(self.device['min_data'], self.device['max_data'] + 1):
+            self.firmware[page_num] = None
         
     def _run(self):
         """ process cmd/word instructions """
@@ -335,13 +353,13 @@ class Target:
         self.cmd = cmd
 
         # commands that don't require args can be dispatched
-        if self.cmd in (CMD_READ_PGM, CMD_READ_DATA, CMD_INC, CMD_PROGRAM_EXT,
-                        CMD_ERASE_PGM, CMD_ERASE_DATA, CMD_PROGRAM_INT,
-                        CMD_PROGRAM_EXT, CMD_PROGRAM_END, CMD_RESET_ADDRESS):
+        if self.cmd in (CMD_READ_PGM, CMD_READ_DATA, CMD_INC,
+                        CMD_ERASE_PGM, CMD_ERASE_DATA, CMD_RESET_ADDRESS,
+                        CMD_PROGRAM_INT, CMD_PROGRAM_EXT, CMD_PROGRAM_END):
             self._run()
 
     def send_arg(self, word):
-        """ send optional word portion of command and execute it """
+        """ send optional word portion of command and dispatch it """
 
         self.word = word
         self._run()
