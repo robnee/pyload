@@ -136,11 +136,11 @@ import os
 import sys
 import time
 import argparse
-import serial
 
 import comm
 import term
 import hexfile
+import intelhex
 import bload
 import picdevice
 
@@ -154,6 +154,7 @@ DEFAULT_PORT = '/dev/ttyUSB0'
 
 DATA = 8
 TOUT = 1
+MOCK = True
 
 
 def run_range_test(com):
@@ -199,37 +200,7 @@ def run_range_test(com):
 def main():
     """ main """
 
-    # reading and fast mode are incompatible
-    if args.read and args.fast:
-        parser.print_help()
-        sys.exit()
-
-    if args.log:
-        if os.path.exists(args.log):
-            os.unlink(args.log)
-        logf = open(args.log, 'a')
-    else:
-        logf = None
-
-    # Check for commands that don't require a filename
-    if args.filename is None:
-        if args.reset:
-            ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
-            com = comm.Comm(ser, logf)
-
-            com.pulse_dtr(0.250)
-            if args.term:
-                term.terminal(com)
-        elif args.term:
-            ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
-            com = comm.Comm(ser, logf)
-
-            com.pulse_dtr(0.250)
-            term.terminal(com)
-        else:
-            parser.print_help()
-
-        sys.exit()
+    start_time = time.time()
 
     # unless we are reading out the chip firmware read a new file to load
     if not args.read:
@@ -249,12 +220,6 @@ def main():
                 print('page_list[%d] = "%s";' % (page_num, file_firmware[page_num]))
 
         sys.exit()
-
-    start_time = time.time()
-
-    # Init comm (holds target in reset)
-    print('Initializing {} {} ...'.format(args.port, args.baud))
-    ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
 
     # create wrapper
     com = comm.Comm(ser, logf)
@@ -311,12 +276,12 @@ def main():
         config = bload.read_config(com)
 
         user_id = ""
-        for b in config[0: 4*2: 2]:
+        for b in config[0: 4 * 2: 2]:
             user_id += '{:X}'.format(b & 0x0F)
 
-        device_id = hexfile.bytes_to_word(config[6*2: 7*2]) >> 5
-        device_rev = hexfile.bytes_to_word(config[6*2: 7*2]) & 0x1F
-        config_words = hexfile.bytes_to_hex(config[7*2: 9*2])
+        device_id = hexfile.bytes_to_word(config[6 * 2: 7 * 2]) >> 5
+        device_rev = hexfile.bytes_to_word(config[6 * 2: 7 * 2]) & 0x1F
+        config_words = hexfile.bytes_to_hex(config[7 * 2: 9 * 2])
     else:
         print("Target does not support Config command\n")
 
@@ -518,13 +483,8 @@ def main():
 
     print("Reseting target...")
     com.pulse_dtr(0.250)
-
-    print("elapsed time:", time.time() - start_time)
-
-    if args.term:
-        term.terminal(com)
-
-    com.close()
+                   
+    print(f"elapsed time: {time.time() - start_time:0.2f} seconds")
 
 
 if __name__ == "__main__":
@@ -544,4 +504,45 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    main()
+    # reading and fast mode are incompatible
+    if args.read and args.fast:
+        parser.print_help()
+        sys.exit()
+
+    if args.log:
+        if os.path.exists(args.log):
+            os.unlink(args.log)
+        logf = open(args.log, 'a')
+    else:
+        logf = None
+
+    print('Initializing communications on {} {} ...'.format(args.port, args.baud))
+    if not MOCK:
+        import serial
+
+        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
+
+    else:
+        import mock
+
+        # unless we are reading out the chip firmware read a new file to load
+        with open('mock.hex') as fp:
+            mock_firmware = intelhex.Hexfile()
+            mock_firmware.read(fp)
+
+        ser = mock.ICSPHost('12F1822', mock_firmware)
+
+    # create wrapper
+    with comm.Comm(ser, logf) as ser_com:
+        if args.reset:
+            ser_com.pulse_dtr(0.250)
+            if args.term:
+                term.terminal(ser_com)
+
+        # Check for commands that require a filename
+        if args.filename is not None:
+            program(ser_com)
+        
+        if args.term:
+            ser_com.pulse_dtr(0.250)
+            term.terminal(ser_com)

@@ -390,3 +390,28 @@ class ICSPHost(Port):
     def write(self, data: bytes):
         super().write(data)
         self.host.run()
+
+
+class BLoad:
+    def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
+        self.port = port
+        self.target = Target(device, firmware)
+
+    def reset(self):
+        """reset ICSP host"""
+        self.ser_out(b'K')
+        print('reset in:', self.port.inq, 'out:', self.port.outq)
+        
+
+class BLoadHost(Port):
+    def __init__(self, device: str, firmware):
+        Port.__init__(self)
+        
+        self.host = BLoad(self, device, firmware)
+        
+    def reset(self):
+        self.host.reset()
+        
+    def write(self, data: bytes):
+        super().write(data)
+        self.host.run()

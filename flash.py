@@ -356,8 +356,8 @@ if __name__ == '__main__':
         ser = mock.ICSPHost('12F1822', mock_firmware)
 
     # create wrapper
-    ser_com = comm.Comm(ser, logf)
-    program(ser_com)
-    ser.close()
+    with comm.Comm(ser, logf) as ser_com:
+        print(ser_com)
+        program(ser_com)
 
     print(f"elapsed time: {time.time() - start_time:0.2f} seconds")
