@@ -22,6 +22,12 @@ class Comm:
         self._log(b'\x01' if ser.cts else b'\x00', "CTS")
         self._log(b'\x01' if ser.rts else b'\x00', "RTS")
 
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, *exc):
+        self.close()
+
     def read(self, request=None):
         """ read a requested number of bytes.  If request is missing or zero read available """
         if not request:
