@@ -72,7 +72,6 @@ data using chr.  Pattern now matches other icsp_load_xxx functions.
 """
 
 import os
-import sys
 import time
 import argparse
 

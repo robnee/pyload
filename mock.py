@@ -391,6 +391,221 @@ class ICSPHost(Port):
         super().write(data)
         self.host.run()
 
+"""
+;   Commands:
+;
+;   C [CHK]
+;   Reads a page of config memory, idlocs, chip id, config and calibration words
+;
+;   I [CHK]
+;   Reports bootloader interface version [1 byte], page of bootloader start
+;   address, page of bootloader end address, and page of start of eeprom address.
+;   4 bytes total.
+;
+;   R [ADR] [CHK]
+;   Reads a page of flash program memory.  The command is 4 bytes long, 1 byte
+;   for the command character 'R', two for the address and 1 checksum byte.
+;   This command returns [DATA] followed by [CHK] (65 bytes total)
+;
+;   W [ADR] [DATA] [CHK]
+;   Writes a page to flash program memory.  The command is 68 bytes long, 1 byte
+;   for the command character 'W', two for the address, a 64 byte data frame and
+;   a checksum byte.
+;
+;   E [ADR] [CHK]
+;   Erases a page of flash program memory.  The command is 4 bytes long, 1 byte
+;   for the command character 'E', two for the address and 1 checksum byte.
+;
+;   D [ADR] [DATA] [CHK]
+;   Write a page of flash data memory.  The command is 68 bytes long, 1 byte
+;   for the command character 'D', two for the address, a 64 byte data frame and
+;   a checksum byte.  Hex files generally choose a high address to represent
+;   data memory but the boot loader expects the address in the low byte of address
+;   and a zero in the high byte.
+;
+;   F [ADR] [CHK]
+;   Reads a page of flash data memory.  The command is 4 bytes long, 1 byte
+;   for the command character 'F', two for the address and 1 checksum byte.
+;   the high byte of the address is ignored.
+;   This command returns [DATA] followed by [CHK] (65 bytes total)
+;   Where:
+;
+;   T [ADR] [CHK]
+;   Test address is writable, i.e. not a protected bootloader address  Does not
+;   test if address is out of range.
+;   This command responds with the (K) prompt if address is writable and (R) if
+;   address is restricted.
+;
+;   Z
+;   Resets the processor
+;
+;   [ADR] - The address is two bytes long and is sent low byte first.  The range
+;   of address (for the 16F819) is 0x0000 - 0x07FF for Read and 0x0020 - 0x06FF
+;   for read and write.
+;
+;   [CHK] - A simple checksum of the databytes transmitted for error checking
+;   When appended to commands the checksum EXCLUDES the first command byte.
+;
+;   [DATA] - represents an entire page of flash program memory.  The page is
+;   organized as 32 low byte/high byte pairs.
+;
+;   Return Codes:
+;   K - Ready to accept the next command
+;   R - Address range error
+;   C - Data checksum error
+;   E - Invalid command
+;
+;   When a command complete successfully the 'K' prompt will be all that is
+;   sent.  There is no success code.  The absense of a R or C error code is
+;   enough to indicate success.
+;
+
+;-------------------------------------------------------------------------------
+; Main bootloader interface handler.  sits in a loop and processes commands
+; Hard reset to exit.
+
+
+boot_main
+        ; Main loop
+        loop
+
+         clrf       boot_crc
+
+         ; Prompt
+         movlw      'K'
+         call       __ser_out
+
+         ; Wait for and get command character
+         call       __ser_wait
+
+         ; Dispatch command
+         switch
+         case 'C'   ; Read Config Words
+          call      boot_check
+          banksel   EEADRH
+          clrf      EEADRH
+          clrf      EEADRL
+          call      flash_cfg_select
+          call      boot_read
+         endcase
+
+         case 'I'   ; Read Bootloader Info
+          call      boot_check
+          call      boot_info
+         endcase
+
+         case 'R'   ; Read Program Block
+          call      boot_address
+          call      boot_check
+          call      flash_pgm_select
+          call      boot_read
+         endcase
+
+         case 'W'  ; Write Program Block
+          call      boot_address
+          call      boot_load_data
+          call      boot_check
+          call      boot_range
+          call      boot_clear_gie
+          call      flash_pgm_erase
+          call      flash_pgm_write
+          call      boot_restore_gie
+         endcase
+
+         case 'E'   ; Erase Program block
+          call      boot_address
+          call      boot_check
+          call      boot_clear_gie
+          call      flash_pgm_erase
+          call      boot_restore_gie
+         endcase
+
+         case 'D'   ; Write Data Block
+          call      boot_address
+          call      boot_load_data
+          call      boot_check
+          call      boot_clear_gie
+          call      flash_dat_write
+          call      boot_restore_gie
+         endcase
+
+         case 'T'  ; Test address
+          call      boot_address
+          call      boot_check
+          call      boot_range
+         endcase
+
+         case 'F'   ; Read Data Block
+          call      boot_address
+          call      boot_check
+          call      flash_dat_select
+          clrf      EEDATH ; Data reads don't populate EEDATH
+          call      boot_read
+         endcase
+
+         case 'Z'   ; Reset and exit bootloader
+          reset
+         endcase
+
+         default
+          ; Error
+          movlw     'E'
+          call      __ser_out
+         endswitch
+
+        endloop
+
+boot_info_table
+        brw
+
+        ; unused
+        dt  0
+        dt  0
+        dt  0
+        dt  0
+
+        ; page num of end of code region
+        dt  HIGH(__CODE_END)
+        dt  LOW(__CODE_END)
+
+        ; page num of start and end eeprom data region
+#ifdef PMCON1
+        dt  0
+        dt  0
+        dt  0
+        dt  0
+#else
+        dt  HIGH(__EEPROM_END)
+        dt  LOW(__EEPROM_END)
+        dt  HIGH(__EEPROM_START)
+        dt  LOW(__EEPROM_START)
+#endif
+        ; address of start and end of bootloader region
+        dt  HIGH(BOOT_SIZE)
+        dt  LOW(BOOT_SIZE)
+        dt  HIGH(boot_loader)
+        dt  LOW(boot_loader)
+        ; pagesize in words (2 bytes each)
+        dt  BOOT_PAGESIZE / 2
+        ; version number
+        dt  BOOT_VERSION
+
+BOOT_PAGESIZE       equ 0x40        ; Size of a data page in bytes
+BOOT_VERSION        equ 0x15        ; Version interface spec
+BOOT_SIZE           equ 0x180       ; Bootloader region size
+
+; __CODE_END                        CONSTANT      00000FFF           4095
+; __CODE_START                      CONSTANT      00000000              0
+; __COMMON_RAM_END                  CONSTANT      0000007F            127
+; __COMMON_RAM_START                CONSTANT      00000070            112
+; __CONFIG_END                      CONSTANT      00008008          32776
+; __CONFIG_START                    CONSTANT      00008007          32775
+; __EEPROM_END                      CONSTANT      0000F0FF          61695
+; __EEPROM_START                    CONSTANT      0000F000          61440
+
+
+
+"""
 
 class BLoad:
     def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
@@ -402,6 +617,36 @@ class BLoad:
         self.ser_out(b'K')
         print('reset in:', self.port.inq, 'out:', self.port.outq)
         
+    def run(self):
+        """dispatch incoming commands"""
+        while self.ser_avail():
+            time.sleep(0.003)
+
+            # command
+            c = self.ser_get()
+            # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
+
+            # dispatch
+            if c == b'Z':  # reset
+                self.reset()
+                return
+            else:
+                self.ser_out(b'E')
+
+            self.ser_out(b'K')
+
+    def ser_avail(self) -> bytes:
+        return self.port.ser_avail()
+
+    def ser_get(self) -> bytes:
+        return self.port.ser_get()
+
+    def ser_get_word(self) -> int:
+        return self.port.ser_get_word()
+
+    def ser_out(self, data: bytes):
+        self.port.ser_out(data)
+
 
 class BLoadHost(Port):
     def __init__(self, device: str, firmware):

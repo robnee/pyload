@@ -197,7 +197,8 @@ def run_range_test(com):
             data = com.read(avail)
             print('avail:', avail, 'data:', data)
 
-def main():
+
+def program(com: comm.Comm):
     """ main """
 
     start_time = time.time()
@@ -219,7 +220,7 @@ def main():
             if file_firmware[page_num]:
                 print('page_list[%d] = "%s";' % (page_num, file_firmware[page_num]))
 
-        sys.exit()
+        return
 
     # create wrapper
     com = comm.Comm(ser, logf)
@@ -239,10 +240,8 @@ def main():
             break
 
     if count == 0 or value != b'K':
-        com.close()
-
         print('[{}, {}] Could not find boot loader on {}\n'.format(count, value, args.port))
-        sys.exit()
+        return
 
     print('Connected...')
 
@@ -315,7 +314,8 @@ def main():
     if min_data != data_start or max_data != data_end:
         print("min_data=", min_data, 'max_data=', max_data)
         print("data_start=", data_start, 'data_end=', data_end)
-        sys.exit()
+
+        return
 
     prog_list = list(range(0, code_end + 1))
     user_list = list(range(min_user, max_user + 1))
@@ -396,7 +396,8 @@ def main():
                 print(file_firmware[page_num].display(page_num))
                 print("Chip:")
                 print(chip_firmware[page_num].display(page_num))
-            sys.exit(1)
+
+            return
 
         page_zero = chip_firmware.compare(file_firmware, [0])
 
@@ -530,7 +531,7 @@ if __name__ == "__main__":
             mock_firmware = intelhex.Hexfile()
             mock_firmware.read(fp)
 
-        ser = mock.ICSPHost('12F1822', mock_firmware)
+        ser = mock.BLoadHost('12F1822', mock_firmware)
 
     # create wrapper
     with comm.Comm(ser, logf) as ser_com:
