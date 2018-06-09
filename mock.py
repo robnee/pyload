@@ -607,16 +607,65 @@ BOOT_SIZE           equ 0x180       ; Bootloader region size
 
 """
 
+class RangeError(Exception):
+    """Raised when on a restricted address"""
+
+    def __init__(self, address):
+        self.address = address
+
 class BLoad:
-    def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
+    BOOT_VERSION = 0x15
+    BOOT_PAGESIZE = 0x40
+    BOOT_SIZE = 0x180
+    BOOT_LOADER = 0x680
+
+    def __init__(self, port: Port, device_name: str, firmware: intelhex.Hexfile=None):
         self.port = port
-        self.target = Target(device, firmware)
+        # self.target = Target(device_name, firmware)
+
+        self.device = picdevice.find_by_name(device_name)
+
+    @property
+    def _code_end(self):
+        return (self.device['max_page'] + 1) * self.BOOT_PAGESIZE
+
+    @property
+    def _eeprom_start(self):
+        return self.device['num_latches']
+
+    @property
+    def _eeprom_end(self):
+        return self.device['num_latches']
+
+    def _info(self):
+        """send bootloader info record"""
+        info = [
+            self.BOOT_VERSION,
+            self.BOOT_PAGESIZE // 2,
+            *reversed(divmod(self.BOOT_LOADER, 0x100)),
+            *reversed(divmod(self.BOOT_SIZE, 0x100)),
+            *reversed(divmod(self._eeprom_start(), 0x100)),
+            *reversed(divmod(self._eeprom_end(), 0x100)),
+            *reversed(divmod(self._code_end(), 0x100)),
+            b'\x00',
+            b'\x00',
+            b'\x00',
+            b'\x00',
+        ]
+
+        for b in info:
+            self.ser_out(b)
+
+    def _range(self, address):
+        """check if address is in range and raise an exception if not"""
+        if address > 100:  # TODO:
+            raise RangeError(address)
 
     def reset(self):
         """reset ICSP host"""
         self.ser_out(b'K')
         print('reset in:', self.port.inq, 'out:', self.port.outq)
-        
+
     def run(self):
         """dispatch incoming commands"""
         while self.ser_avail():
@@ -627,7 +676,11 @@ class BLoad:
             # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
 
             # dispatch
-            if c == b'Z':  # reset
+            if c == b'I':  # info
+                self._info()
+            elif c == b'T':  # test address
+                self._info()
+            elif c == b'Z':  # reset
                 self.reset()
                 return
             else:

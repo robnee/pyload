@@ -222,9 +222,6 @@ def program(com: comm.Comm):
 
         return
 
-    # create wrapper
-    com = comm.Comm(ser, logf)
-
     # Bring target out of reset
     print('Reset ...')
     time.sleep(0.050)
