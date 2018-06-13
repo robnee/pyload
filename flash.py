@@ -253,7 +253,8 @@ def program(com):
         chip_firmware = read_firmware(com, device_param)
         print()
 
-        with open(args.filename, mode='w') as fp:
+        # Hex files always have DOS encoding
+        with open(args.filename, mode='w', newline='\r\n') as fp:
             chip_firmware.write(fp)
 
         if not args.quiet:

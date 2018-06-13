@@ -37,6 +37,9 @@ class Port:
         self.inq = bytes()
         self.outq = bytes()
 
+    def reset(self):
+        pass
+
     @property
     def in_waiting(self):
         return len(self.inq)
@@ -47,8 +50,10 @@ class Port:
 
     @dtr.setter
     def dtr(self, state: bool):
-        if self._dtr and not state:
+        # detect dtr reset
+        if self.dtr and not state:
             self.reset()
+
         self._dtr = state
 
     @property
@@ -126,9 +131,9 @@ class Port:
 
 
 class Proc:
-    def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
+    """base class for command processor"""
+    def __init__(self, port: Port):
         self.port = port
-        self.target = Target(device, firmware)
 
     def reset(self):
         """reset ICSP host"""
@@ -146,7 +151,6 @@ class Proc:
 
     def ser_out(self, data: bytes):
         self.port.ser_out(data)
-
 
 
 class Target:
@@ -294,7 +298,7 @@ class Target:
 
 class ICSPProc(Proc):
     def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
-        self.port = port
+        Proc.__init__(self, port)
         self.target = Target(device, firmware)
 
     def run(self):
@@ -343,7 +347,7 @@ class ICSPProc(Proc):
     
             elif c == b'R':  # read single program word
                 w = self.target.get_word()
-                self.target.send_word(w)
+                self.ser_out(w)
     
             elif c == b'Q':  # query status
                 # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
@@ -390,13 +394,14 @@ class ICSPHost(Port):
         Port.__init__(self)
         
         self.proc = ICSPProc(self, device, firmware)
-        
+
     def reset(self):
         self.proc.reset()
-        
+
     def write(self, data: bytes):
         super().write(data)
         self.proc.run()
+
 
 """
 ;   Commands:
@@ -646,20 +651,20 @@ class BLoad:
 
             # dispatch
             if c == b'C':  # read config words
-          call      boot_check
-          banksel   EEADRH
-          clrf      EEADRH
-          clrf      EEADRL
-          call      flash_cfg_select
-          call      boot_read
+                self.boot_check()
+                # banksel   EEADRH
+                # clrf      EEADRH
+                # clrf      EEADRL
+                # call      flash_cfg_select
+                # call      boot_read
 
             elif c == b'I':  # info
                 self._info()
             elif c == b'R':  # read program page
-          call      boot_address
-          call      boot_check
-          call      flash_pgm_select
-          call      boot_read
+                self.boot_address()
+                self.boot_check()
+                # call      flash_pgm_select
+                # call      boot_read
 
             elif c == b'T':  # test address
                 self._info()

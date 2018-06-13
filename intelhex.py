@@ -241,7 +241,7 @@ class Hexfile:
                 calcsum = 2 + 0 + 4 + hex_to_sum(data)
                 calcsum = (~calcsum + 1) & 0xFF
 
-                print(":02000004%s%02X" % (data, calcsum), file=fp, end='\r\n')
+                print(":02000004%s%02X" % (data, calcsum), file=fp)
 
             if page is not None:
                 # break each page into blocks of 8 words
@@ -288,12 +288,12 @@ class Hexfile:
                         calcsum = byte_count + addr // 0x100 + (addr & 0xFF) + hex_to_sum(data)
                         calcsum = (~calcsum + 1) & 0xFF
 
-                        # print(':%02X%04X%02X%s%02X' % (count, addr, 0x00, data, calcsum), file=fp, end='\r\n')
-                        fp.write(':%02X%04X%02X%s%02X\r\n' % (byte_count, addr, 0x00, data, calcsum))
+                        print(':%02X%04X%02X%s%02X' % (byte_count, addr, 0x00, data, calcsum), file=fp)
+                        # fp.write(':%02X%04X%02X%s%02X\r\n' % (byte_count, addr, 0x00, data, calcsum))
 
                         addr += byte_count
 
-        print(':00000001FF', file=fp, end='\r\n')
+        print(':00000001FF', file=fp)
 
     def compare(self, other, pages):
         """Check that the data is appropriate to download.  Returns a list of pages that mismatch"""
