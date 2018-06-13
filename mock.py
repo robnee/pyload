@@ -125,7 +125,7 @@ class Port:
         self.inq += data
 
 
-class ICSP:
+class Proc:
     def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
         self.port = port
         self.target = Target(device, firmware)
@@ -134,93 +134,6 @@ class ICSP:
         """reset ICSP host"""
         self.ser_out(b'K')
         print('reset in:', self.port.inq, 'out:', self.port.outq)
-        
-    def run(self):
-        """dispatch incoming commands"""
-        while self.ser_avail():
-            time.sleep(0.003)
-
-            # command
-            c = self.ser_get()
-            # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
-    
-            # dispatch
-            if c == b'K':  # sync
-                self.ser_out(b'K')
-    
-            elif c == b'C':  # send command
-                a = self.ser_get()
-                self.target.send_cmd(a)
-    
-            elif c == b'J':  # jump
-                num_words = self.ser_get_word()
-                
-                for _ in range(num_words):
-                    self.target.send_cmd(CMD_INC)
-    
-            elif c == b'F':  # fetch program words
-                num_words = self.ser_get_word()
-    
-                for _ in range(num_words):
-                    self.target.send_cmd(CMD_READ_PGM)
-                    word = self.target.get_word()
-                    self.ser_out(word)
-                    self.target.send_cmd(CMD_INC)
-    
-            elif c == b'G':  # fetch data words
-                num_words = self.ser_get_word()
-    
-                for _ in range(num_words):
-                    self.target.send_cmd(CMD_READ_DATA)
-                    word = self.target.get_word()
-                    self.ser_out(word)
-                    self.target.send_cmd(CMD_INC)
-
-            elif c == b'P':  # pause
-                time.sleep(0.005)
-    
-            elif c == b'R':  # read single program word
-                w = self.target.get_word()
-                self.target.send_word(w)
-    
-            elif c == b'Q':  # query status
-                # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
-                self.ser_out(b'\x00\x00\x00\x00\x00\x00\x00\x00')
-    
-            elif c == b'L':
-                # Low-level functions.  Fetch sub command and assume it's valid
-                a = self.ser_get()
-                if a in (b'H', b'L', b'P', b'Q'):
-                    # these command need no implementation
-                    pass
-                elif a == b'I':
-                    self.target.set_mclr2(False)
-                elif a == b'J':
-                    self.target.set_mclr2(True)
-                elif a == b'M':
-                    self.target.set_clk(False)
-                elif a == b'N':
-                    self.target.set_clk(True)
-                elif a == b'O':
-                    self.target.set_clk(True)
-                    self.target.set_clk(False)
-    
-            elif c == b'U':  # send byte
-                b = self.ser_get()
-                self.target.send_byte(b)
-    
-            elif c == b'W':  # send word
-                word = self.ser_get_word()
-                self.target.send_arg(word)
-    
-            elif c == b'V':  # version
-                self.ser_out(b'V1.8\n')
-    
-            elif c == b'Z':  # release
-                pass
-    
-            else:
-                self.ser_out(b'E')
 
     def ser_avail(self) -> bytes:
         return self.port.ser_avail()
@@ -233,6 +146,7 @@ class ICSP:
 
     def ser_out(self, data: bytes):
         self.port.ser_out(data)
+
 
 
 class Target:
@@ -378,18 +292,111 @@ class Target:
         pass
 
 
+class ICSPProc(Proc):
+    def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
+        self.port = port
+        self.target = Target(device, firmware)
+
+    def run(self):
+        """dispatch incoming commands"""
+        while self.ser_avail():
+            time.sleep(0.003)
+
+            # command
+            c = self.ser_get()
+            # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
+    
+            # dispatch
+            if c == b'K':  # sync
+                self.ser_out(b'K')
+    
+            elif c == b'C':  # send command
+                a = self.ser_get()
+                self.target.send_cmd(a)
+    
+            elif c == b'J':  # jump
+                num_words = self.ser_get_word()
+                
+                for _ in range(num_words):
+                    self.target.send_cmd(CMD_INC)
+    
+            elif c == b'F':  # fetch program words
+                num_words = self.ser_get_word()
+    
+                for _ in range(num_words):
+                    self.target.send_cmd(CMD_READ_PGM)
+                    word = self.target.get_word()
+                    self.ser_out(word)
+                    self.target.send_cmd(CMD_INC)
+    
+            elif c == b'G':  # fetch data words
+                num_words = self.ser_get_word()
+    
+                for _ in range(num_words):
+                    self.target.send_cmd(CMD_READ_DATA)
+                    word = self.target.get_word()
+                    self.ser_out(word)
+                    self.target.send_cmd(CMD_INC)
+
+            elif c == b'P':  # pause
+                time.sleep(0.005)
+    
+            elif c == b'R':  # read single program word
+                w = self.target.get_word()
+                self.target.send_word(w)
+    
+            elif c == b'Q':  # query status
+                # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
+                self.ser_out(b'\x00\x00\x00\x00\x00\x00\x00\x00')
+    
+            elif c == b'L':
+                # Low-level functions.  Fetch sub command and assume it's valid
+                a = self.ser_get()
+                if a in (b'H', b'L', b'P', b'Q'):
+                    # these command need no implementation
+                    pass
+                elif a == b'I':
+                    self.target.set_mclr2(False)
+                elif a == b'J':
+                    self.target.set_mclr2(True)
+                elif a == b'M':
+                    self.target.set_clk(False)
+                elif a == b'N':
+                    self.target.set_clk(True)
+                elif a == b'O':
+                    self.target.set_clk(True)
+                    self.target.set_clk(False)
+    
+            elif c == b'U':  # send byte
+                b = self.ser_get()
+                self.target.send_byte(b)
+    
+            elif c == b'W':  # send word
+                word = self.ser_get_word()
+                self.target.send_arg(word)
+    
+            elif c == b'V':  # version
+                self.ser_out(b'V1.8\n')
+    
+            elif c == b'Z':  # release
+                pass
+    
+            else:
+                self.ser_out(b'E')
+
+
 class ICSPHost(Port):
     def __init__(self, device: str, firmware):
         Port.__init__(self)
         
-        self.host = ICSP(self, device, firmware)
+        self.proc = ICSPProc(self, device, firmware)
         
     def reset(self):
-        self.host.reset()
+        self.proc.reset()
         
     def write(self, data: bytes):
         super().write(data)
-        self.host.run()
+        self.proc.run()
 
 """
 ;   Commands:
@@ -603,8 +610,6 @@ BOOT_SIZE           equ 0x180       ; Bootloader region size
 ; __EEPROM_END                      CONSTANT      0000F0FF          61695
 ; __EEPROM_START                    CONSTANT      0000F000          61440
 
-
-
 """
 
 class RangeError(Exception):
@@ -614,14 +619,85 @@ class RangeError(Exception):
         self.address = address
 
 class BLoad:
+    def __init__(self, port: Port, device_name: str, firmware: intelhex.Hexfile=None):
+        self.port = port
+        self.boot_crc = 0
+
+        self.target = BLoadTarget(device_name, firmware)
+
+    def reset(self):
+        """reset ICSP host"""
+        self.ser_out(b'K')
+        print('reset in:', self.port.inq, 'out:', self.port.outq)
+
+    def boot_check(self):
+        c = self.ser_get()
+        if self.crc % 0x100 != c[0]:
+            pass
+        
+    def run(self):
+        """dispatch incoming commands"""
+        while self.ser_avail():
+            time.sleep(0.003)
+
+            # command
+            c = self.ser_get()
+            # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
+
+            # dispatch
+            if c == b'C':  # read config words
+          call      boot_check
+          banksel   EEADRH
+          clrf      EEADRH
+          clrf      EEADRL
+          call      flash_cfg_select
+          call      boot_read
+
+            elif c == b'I':  # info
+                self._info()
+            elif c == b'R':  # read program page
+          call      boot_address
+          call      boot_check
+          call      flash_pgm_select
+          call      boot_read
+
+            elif c == b'T':  # test address
+                self._info()
+            elif c == b'Z':  # reset
+                self.reset()
+                return
+            else:
+                self.ser_out(b'E')
+
+            self.ser_out(b'K')
+
+    def ser_avail(self) -> bytes:
+        return self.port.ser_avail()
+
+    def ser_get(self) -> bytes:
+        c = self.port.ser_get()
+        self.boot_crc += c[0]
+        return c
+
+    def ser_get_word(self) -> int:
+        return self.port.ser_get_word()
+
+    def ser_out(self, data: bytes):
+        self.port.ser_out(data)
+
+
+def BLoadTarget():  # TODO: Make a subclass of Target
     BOOT_VERSION = 0x15
     BOOT_PAGESIZE = 0x40
     BOOT_SIZE = 0x180
     BOOT_LOADER = 0x680
 
-    def __init__(self, port: Port, device_name: str, firmware: intelhex.Hexfile=None):
-        self.port = port
-        # self.target = Target(device_name, firmware)
+    def __init__(self, device_name, firmware):
+        self.firmware = firmware
+        self.word_address = 0
+        self.cmd = None
+        self.word = b''
+        self.run_state = "HALT"
 
         self.device = picdevice.find_by_name(device_name)
 
@@ -637,7 +713,7 @@ class BLoad:
     def _eeprom_end(self):
         return self.device['num_latches']
 
-    def _info(self):
+    def _boot_info(self):
         """send bootloader info record"""
         info = [
             self.BOOT_VERSION,
@@ -655,50 +731,15 @@ class BLoad:
 
         for b in info:
             self.ser_out(b)
+            
+    def _boot_check(self):
+        """validate checksum"""
+        pass
 
-    def _range(self, address):
+    def _boot_range(self, address):
         """check if address is in range and raise an exception if not"""
         if address > 100:  # TODO:
             raise RangeError(address)
-
-    def reset(self):
-        """reset ICSP host"""
-        self.ser_out(b'K')
-        print('reset in:', self.port.inq, 'out:', self.port.outq)
-
-    def run(self):
-        """dispatch incoming commands"""
-        while self.ser_avail():
-            time.sleep(0.003)
-
-            # command
-            c = self.ser_get()
-            # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
-
-            # dispatch
-            if c == b'I':  # info
-                self._info()
-            elif c == b'T':  # test address
-                self._info()
-            elif c == b'Z':  # reset
-                self.reset()
-                return
-            else:
-                self.ser_out(b'E')
-
-            self.ser_out(b'K')
-
-    def ser_avail(self) -> bytes:
-        return self.port.ser_avail()
-
-    def ser_get(self) -> bytes:
-        return self.port.ser_get()
-
-    def ser_get_word(self) -> int:
-        return self.port.ser_get_word()
-
-    def ser_out(self, data: bytes):
-        self.port.ser_out(data)
 
 
 class BLoadHost(Port):
