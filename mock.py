@@ -33,12 +33,15 @@ CMD_RESET_ADDRESS = b'\x16'
 class Port:
     def __init__(self):
         self._dtr = False
-        self.break_dur = 0
+        self.clear()
+        
+    def clear(self):
         self.inq = bytes()
         self.outq = bytes()
 
     def reset(self):
-        pass
+        """reset the port.  typically overriddend by Host"""
+        self.clear()
 
     @property
     def in_waiting(self):
@@ -74,7 +77,7 @@ class Port:
     def read(self, num_bytes: int):
         """read data from inq"""
         if len(self.inq) < num_bytes:
-            print(f'read: {num_bytes} in: {self.inq} out: {self.outq}')
+            # print(f'read: {num_bytes} in: {self.inq} out: {self.outq}')
             raise EOFError
             
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
@@ -95,19 +98,16 @@ class Port:
         return ret
         
     def send_break(self, duration: int):
-        self.break_dur = duration
-        self.outq = bytes()
+        self.clear()
 
     def write(self, data: bytes):
         self.outq += data
 
     def open(self):
-        self.inq = bytes()
-        self.outq = bytes()
-        self.break_dur = 0
+        self.clear()
         
     def close(self):
-        pass
+        self.clear()
 
     def ser_avail(self):
         return self.outq
@@ -138,7 +138,7 @@ class Proc:
     def reset(self):
         """reset ICSP host"""
         self.ser_out(b'K')
-        print('reset in:', self.port.inq, 'out:', self.port.outq)
+        print('Proc reset:', self.port.inq, 'out:', self.port.outq)
 
     def ser_avail(self) -> bytes:
         return self.port.ser_avail()
@@ -396,6 +396,7 @@ class ICSPHost(Port):
         self.proc = ICSPProc(self, device, firmware)
 
     def reset(self):
+        super().reset()
         self.proc.reset()
 
     def write(self, data: bytes):
@@ -617,49 +618,83 @@ BOOT_SIZE           equ 0x180       ; Bootloader region size
 
 """
 
-class RangeError(Exception):
+class AddressError(Exception):
     """Raised when on a restricted address"""
 
     def __init__(self, address):
         self.address = address
 
-class BLoad:
-    def __init__(self, port: Port, device_name: str, firmware: intelhex.Hexfile=None):
-        self.port = port
-        self.boot_crc = 0
 
+class BLoadProc(Proc):
+    """equivalent to the bootloader software"""
+    
+    BOOT_VERSION = 0x15
+    BOOT_PAGESIZE = 0x40
+
+    def __init__(self, port: Port, device_name: str, firmware: intelhex.Hexfile=None):
+        Proc.__init__(self, port)
+        self.boot_crc = 0
+        self.reset_time = 0
+        self.running = False
         self.target = BLoadTarget(device_name, firmware)
 
     def reset(self):
         """reset ICSP host"""
+        self.reset_time = time.time()
+    
+    def send_break(self):
+        """break handler"""
+        self.running = True
         self.ser_out(b'K')
-        print('reset in:', self.port.inq, 'out:', self.port.outq)
 
     def boot_check(self):
         c = self.ser_get()
         if self.crc % 0x100 != c[0]:
             pass
-        
+    
+    def boot_address(self):
+        c = self.ser_get()
+
+    def boot_info(self):
+        """send bootloader info record"""
+        info = [
+            self.BOOT_VERSION,
+            self.BOOT_PAGESIZE // 2,
+            *reversed(divmod(self.target.boot_start, 0x100)),
+            *reversed(divmod(self.target.boot_size, 0x100)),
+            *reversed(divmod(self.target.eeprom_start, 0x100)),
+            *reversed(divmod(self.target.eeprom_end, 0x100)),
+            *reversed(divmod(self.target.code_end, 0x100)),
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]
+
+        x = bytes(info)
+        self.ser_out(x)
+
     def run(self):
         """dispatch incoming commands"""
+        if not self.running:
+            return
+
         while self.ser_avail():
-            time.sleep(0.003)
+            time.sleep(0.002)
 
             # command
             c = self.ser_get()
-            # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
+
+            self.crc = 0
 
             # dispatch
             if c == b'C':  # read config words
                 self.boot_check()
-                # banksel   EEADRH
-                # clrf      EEADRH
-                # clrf      EEADRL
-                # call      flash_cfg_select
-                # call      boot_read
-
+                self.target.read_config()
+                # send data
             elif c == b'I':  # info
-                self._info()
+                self.boot_check()
+                self.boot_info()
             elif c == b'R':  # read program page
                 self.boot_address()
                 self.boot_check()
@@ -667,7 +702,7 @@ class BLoad:
                 # call      boot_read
 
             elif c == b'T':  # test address
-                self._info()
+                self.boot_info()
             elif c == b'Z':  # reset
                 self.reset()
                 return
@@ -676,86 +711,87 @@ class BLoad:
 
             self.ser_out(b'K')
 
-    def ser_avail(self) -> bytes:
-        return self.port.ser_avail()
 
-    def ser_get(self) -> bytes:
-        c = self.port.ser_get()
-        self.boot_crc += c[0]
-        return c
+class BLoadTarget():
+    """represents the processor being self-programmed by he bootloader"""
 
-    def ser_get_word(self) -> int:
-        return self.port.ser_get_word()
-
-    def ser_out(self, data: bytes):
-        self.port.ser_out(data)
-
-
-def BLoadTarget():  # TODO: Make a subclass of Target
-    BOOT_VERSION = 0x15
-    BOOT_PAGESIZE = 0x40
-    BOOT_SIZE = 0x180
     BOOT_LOADER = 0x680
-
+    BOOT_SIZE = 0x180
+    BOOT_PAGESIZE = 0x40
+    
     def __init__(self, device_name, firmware):
         self.firmware = firmware
         self.word_address = 0
-        self.cmd = None
         self.word = b''
-        self.run_state = "HALT"
 
         self.device = picdevice.find_by_name(device_name)
 
     @property
-    def _code_end(self):
+    def boot_start(self):
+        return self.BOOT_LOADER
+        
+    @property
+    def boot_size(self):
+        return self.BOOT_SIZE
+
+    @property
+    def code_end(self):
         return (self.device['max_page'] + 1) * self.BOOT_PAGESIZE
 
     @property
-    def _eeprom_start(self):
+    def eeprom_start(self):
         return self.device['num_latches']
 
     @property
-    def _eeprom_end(self):
+    def eeprom_end(self):
         return self.device['num_latches']
-
-    def _boot_info(self):
-        """send bootloader info record"""
-        info = [
-            self.BOOT_VERSION,
-            self.BOOT_PAGESIZE // 2,
-            *reversed(divmod(self.BOOT_LOADER, 0x100)),
-            *reversed(divmod(self.BOOT_SIZE, 0x100)),
-            *reversed(divmod(self._eeprom_start(), 0x100)),
-            *reversed(divmod(self._eeprom_end(), 0x100)),
-            *reversed(divmod(self._code_end(), 0x100)),
-            b'\x00',
-            b'\x00',
-            b'\x00',
-            b'\x00',
-        ]
-
-        for b in info:
-            self.ser_out(b)
+    
+    @property
+    def conf_page_num(self):
+        return self.device['conf_page']
             
-    def _boot_check(self):
-        """validate checksum"""
-        pass
-
     def _boot_range(self, address):
         """check if address is in range and raise an exception if not"""
         if address > 100:  # TODO:
             raise RangeError(address)
+
+    def boot_read_config(self):
+        return self.boot_read_page(self.conf_page_num)
+        
+    def boot_read_page(self, address: int):
+        """access a two byte firmware word by word address"""
+
+        page_num, word_num = divmod(self.word_address, intelhex.PAGELEN)
+        if word_num != 0:
+            raise AddressError
+            
+        page = self.firmware[page_num]
+        data = bytearray(page)
+
+        print(f'data: {page_num} {data}')
+    
+        if False: # self.word_address == 0x8006:
+            chip_id = (0b10_0111_000 << 5) + 0b0_0101
+            self.word = chip_id.to_bytes(2, 'little')
+        
+        return data
 
 
 class BLoadHost(Port):
     def __init__(self, device: str, firmware):
         Port.__init__(self)
         
-        self.host = BLoad(self, device, firmware)
-        
+        self.proc = BLoadProc(self, device, firmware)
+
     def reset(self):
-        self.host.reset()
+        super().reset()
+        self.proc.reset()
         
+    def send_break(self, duration: int):
+        super().send_break(duration)
+        self.proc.send_break()
+    
     def write(self, data: bytes):
+        """intercept incoming data and call Proc to process it"""
         super().write(data)
-        self.host.run()
+        self.proc.run()
