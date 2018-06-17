@@ -641,7 +641,7 @@ class BLoadProc(Proc):
     def reset(self):
         """reset ICSP host"""
         self.reset_time = time.time()
-    
+
     def send_break(self):
         """break handler"""
         self.running = True
@@ -654,6 +654,13 @@ class BLoadProc(Proc):
     
     def boot_address(self):
         c = self.ser_get()
+
+    def boot_crc(self, data: bytes):
+         crc = (sum(data) % 0x100,)
+         
+         print(crc)
+         
+         return crc
 
     def boot_info(self):
         """send bootloader info record"""
@@ -671,8 +678,9 @@ class BLoadProc(Proc):
             0x0,
         ]
 
-        x = bytes(info)
-        self.ser_out(x)
+        data = bytes(info)
+        self.ser_out(data)
+        self.ser_out(self.boot_crc(data))
 
     def run(self):
         """dispatch incoming commands"""

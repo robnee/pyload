@@ -88,12 +88,12 @@ def get_info(com):
     # if bootloader responds with less than four bytes assume that it doesn't
     # support the I command.  Version 0x10, Boot region 0x38 - 0x3F, EEPROM data 0x108
     if count < 4:
-        return bytes(16)
+        return (0,) * 7
 
     # Check for an error
     if data == b'CK':
         print('\nChecksum error issuing bootloader info command')
-        return bytes(16)
+        return (0,) * 7
 
     count, checksum = com.read(1)
 
@@ -101,12 +101,12 @@ def get_info(com):
     if ord(checksum) != calc_checksum(data):
         print('\nChecksum error getting bootloader info.  chip:0x%02x calc:0x%02x' %
               (ord(checksum), calc_checksum(data)))
-        return bytes(16)
+        return (0,) * 7
 
     prompt = wait_k(com)
     if prompt != b'K':
         print('Error [%s] bootloader info' % prompt)
-        return bytes(16)
+        return (0,) * 7
 
     # return boot_version, boot_start, boot_size, data_start, data_end, code_end
     return struct.unpack('BBHHHHHxxxx', data)

@@ -222,12 +222,15 @@ def program(com: comm.Comm):
 
         return
 
-    # Bring target out of reset
+    # pulse dtr to reset the device then flush the buffers to get rid
+    # of noise from glitchy startup
     print('Reset ...')
     time.sleep(0.050)
-    com.dtr_active(False)
+    com.pulse_dtr(0.250)
     time.sleep(0.050)
     com.flush()
+    
+    # boot loader is now waiting on a break signal to activate
     com.pulse_break(0.200)
 
     # Look for prompt but skip null character noise
@@ -245,17 +248,6 @@ def program(com: comm.Comm):
     # Get info about the bootloader
     (boot_version, boot_pagesize, boot_start, boot_size,
      data_start, data_end, code_end) = bload.get_info(com)
-
-    if boot_version == 0x00:
-        print("Target does not support Info command\n")
-
-        # Legacy values
-        boot_version = 0x10
-        boot_start = 0x38
-        boot_size = 0x180
-        code_end = 0x3f
-        data_start = 0x108
-        data_end = 0x110
 
     if boot_version >= 0x14:
         # Recompute word addresses as page addresses
@@ -280,13 +272,7 @@ def program(com: comm.Comm):
         config_words = hexfile.bytes_to_hex(config[7 * 2: 9 * 2])
     else:
         print("Target does not support Config command\n")
-
-        # Specify standard values
-        config = bytes(9 * 2)
-        user_id = ""
-        device_id = 0x04E
-        device_rev = 1
-        config_words = ""
+        return 
 
     device_param = picdevice.PARAM[device_id]
     device_name = device_param['name']
