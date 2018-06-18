@@ -655,12 +655,12 @@ class BLoadProc(Proc):
     def boot_address(self):
         c = self.ser_get()
 
-    def boot_crc(self, data: bytes):
-         crc = (sum(data) % 0x100,)
+    def calc_crc(self, data: bytes):
+         crc = sum(data) % 0x100
          
-         print(crc)
+         print(data, crc)
          
-         return crc
+         return bytes([crc])
 
     def boot_info(self):
         """send bootloader info record"""
@@ -680,7 +680,7 @@ class BLoadProc(Proc):
 
         data = bytes(info)
         self.ser_out(data)
-        self.ser_out(self.boot_crc(data))
+        self.ser_out(self.calc_crc(data))
 
     def run(self):
         """dispatch incoming commands"""
@@ -763,10 +763,10 @@ class BLoadTarget():
         if address > 100:  # TODO:
             raise RangeError(address)
 
-    def boot_read_config(self):
-        return self.boot_read_page(self.conf_page_num)
+    def read_config(self):
+        return self.read_page(self.conf_page_num)
         
-    def boot_read_page(self, address: int):
+    def read_page(self, address: int):
         """access a two byte firmware word by word address"""
 
         page_num, word_num = divmod(self.word_address, intelhex.PAGELEN)
@@ -774,6 +774,7 @@ class BLoadTarget():
             raise AddressError
             
         page = self.firmware[page_num]
+        print(page_num, page)
         data = bytearray(page)
 
         print(f'data: {page_num} {data}')
