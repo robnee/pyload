@@ -266,9 +266,12 @@ def program(com: comm.Comm):
         for b in config[0: 4 * 2: 2]:
             user_id += '{:X}'.format(b & 0x0F)
 
-        device_id = hexfile.bytes_to_word(config[6 * 2: 7 * 2]) >> 5
-        device_rev = hexfile.bytes_to_word(config[6 * 2: 7 * 2]) & 0x1F
-        config_words = hexfile.bytes_to_hex(config[7 * 2: 9 * 2])
+        x = config[6 * 2: 7 * 2]
+        y = int.from_bytes(x, 'little')
+        z = hex(y)
+        device_id = int.from_bytes(config[6 * 2: 7 * 2], 'little') >> 5
+        device_rev = int.from_bytes(config[6 * 2: 7 * 2], 'little') & 0x1F
+        config_words = int.from_bytes(config[7 * 2: 9 * 2], 'little')
     else:
         print("Target does not support Config command\n")
         return 
@@ -484,11 +487,12 @@ if __name__ == "__main__":
     parser.add_argument('--version', action='version', version='$Id: pyload.py 901 2018-04-28 21:44:56Z rnee $')
 
     parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
- 
-    argv = sys.argv
-    #argv = ['pyload.py', '-r', 'x.hex']
-    print(argv)
-    args = parser.parse_args(argv)
+
+    # pass arguments explicitly to ease overriding
+    argv = sys.argv[1:]
+    #argv = ['-r', 'x.hex']
+
+    args = parser.parse_args(args=argv)
 
     # reading and fast mode are incompatible
     if args.read and args.fast:
