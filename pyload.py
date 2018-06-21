@@ -139,7 +139,6 @@ import argparse
 
 import comm
 import term
-import hexfile
 import intelhex
 import bload
 import picdevice
@@ -207,7 +206,7 @@ def program(com: comm.Comm):
     if not args.read:
         # Read, parse and display image to load
         with open(args.filename) as fp:
-            file_firmware = hexfile.Hexfile()
+            file_firmware = intelhex.Hexfile()
             file_firmware.read(fp)
             if not args.quiet:
                 print(args.filename)
@@ -338,14 +337,14 @@ def program(com: comm.Comm):
         conf_str = user_id + "    " * 2 + conf_str[6 * 4:9 * 4] + "    " * 23
 
         # Add config page
-        chip_firmware[conf_page] = hexfile.Page(conf_str)
+        chip_firmware[conf_page] = intelhex.Page(conf_str)
 
         if not args.quiet:
             print(chip_firmware.display())
 
         # blank chip id so this will compare to file_firmware
         conf_str = conf_str[:6 * 4] + '    ' + conf_str[7 * 4:]
-        chip_firmware[conf_page] = hexfile.Page(conf_str)
+        chip_firmware[conf_page] = intelhex.Page(conf_str)
 
     else:
         print('unsupported bootloader version:', boot_version)
@@ -485,8 +484,11 @@ if __name__ == "__main__":
     parser.add_argument('--version', action='version', version='$Id: pyload.py 901 2018-04-28 21:44:56Z rnee $')
 
     parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
-
-    args = parser.parse_args()
+ 
+    argv = sys.argv
+    #argv = ['pyload.py', '-r', 'x.hex']
+    print(argv)
+    args = parser.parse_args(argv)
 
     # reading and fast mode are incompatible
     if args.read and args.fast:

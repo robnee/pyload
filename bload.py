@@ -7,7 +7,7 @@ $Id: bload.py 899 2018-04-28 20:26:42Z rnee $
 import sys
 import struct
 
-import hexfile
+import intelhex
 
 PAGESIZE = 64
 
@@ -130,7 +130,7 @@ def write_page(com, cmd_code: bytes, page_num: int, page_bytes):
     com.write(cmd)
 
 
-def write_pages(com, cmd: bytes, pages: hexfile.Hexfile, page_nums):
+def write_pages(com, cmd: bytes, pages: intelhex.Hexfile, page_nums):
     """write specified list of pages"""
     for page_num in page_nums:
         page = pages[page_num] if page_num < len(pages) else None
@@ -175,7 +175,7 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
 
         if count != PAGESIZE:
             print('Short page %d [%d]' % (page_num, count))
-            print('[', hexfile.bytes_to_hex(data), ']')
+            print(f'[{data}]')
             continue
 
         # Check checksum
@@ -240,16 +240,16 @@ def read_pages(com, cmd_code: bytes, page_nums):
     return page_list
 
 
-def read_program(com, page_nums) -> hexfile.Hexfile:
+def read_program(com, page_nums) -> intelhex.Hexfile:
     """Read all pages and create a list"""
 
     prog_list = read_pages(com, b'R', page_nums)
 
-    pages = hexfile.Hexfile()
+    pages = intexhex.Hexfile()
 
     for page_num, data in zip(page_nums, prog_list):
         if data:
-            page = hexfile.Page(data)
+            page = intelhex.Page(data)
 
             # Remove NULL words
             for offset in range(0, len(page), 2):
@@ -264,16 +264,16 @@ def read_program(com, page_nums) -> hexfile.Hexfile:
     return pages
 
 
-def read_data(com, page_nums) -> hexfile.Hexfile:
+def read_data(com, page_nums) -> intelhex.Hexfile:
     """Read all pages and create a list"""
 
     data_list = read_pages(com, b'F', page_nums)
 
-    pages = hexfile.Hexfile()
+    pages = intelhex.Hexfile()
 
     for page_num, data in zip(page_nums, data_list):
         if data:
-            page = hexfile.Page(data)
+            page = intelhex.Page(data)
 
             # Remove NULL words and force unused high word to 00
             for offset in range(0, len(page), 2):
@@ -302,7 +302,7 @@ def write_data_page(com, page_num: int, page1, page2):
         return
 
     address = get_address(page_num)
-    data = hexfile.hex_to_bytes(page, 4)
+    data = intelhex.hex_to_bytes(page, 4)  # todo: 
     checksum = bytes([calc_checksum(address + data)])
 
     sys.stderr.write('.')
@@ -323,3 +323,6 @@ def write_data(com, min_data: int, max_data: int, data):
         if prompt != b'K':
             print("Error [%s] writing data page %2X\n" % (prompt, page_num * PAGESIZE // 2))
             return
+            
+if __name__ == "__main__":
+    sys.argv = ['x.hex']

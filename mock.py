@@ -78,7 +78,7 @@ class Port:
         """read data from inq"""
         if len(self.inq) < num_bytes:
             # print(f'read: {num_bytes} in: {self.inq} out: {self.outq}')
-            raise EOFError
+            raise EOFError(f'{self.inq} < {num_bytes}')
             
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
         # print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}')
@@ -679,9 +679,17 @@ class BLoadProc(Proc):
         ]
 
         data = bytes(info)
-        self.ser_out(data)
+        print('info sum:', hex(self.calc_crc(data)[0]))
         self.ser_out(self.calc_crc(data))
 
+    def boot_config(self):
+        """ send config words """
+        data = self.target.read_config()
+        
+        self.ser_out(data)
+        print('config sum:', hex(self.calc_crc(data)[0]))
+        self.ser_out(self.calc_crc(data))
+        
     def run(self):
         """dispatch incoming commands"""
         if not self.running:
@@ -698,8 +706,7 @@ class BLoadProc(Proc):
             # dispatch
             if c == b'C':  # read config words
                 self.boot_check()
-                self.target.read_config()
-                # send data
+                self.boot_config()
             elif c == b'I':  # info
                 self.boot_check()
                 self.boot_info()
@@ -763,10 +770,10 @@ class BLoadTarget():
         if address > 100:  # TODO:
             raise RangeError(address)
 
-    def read_config(self):
+    def read_config(self) -> bytes:
         return self.read_page(self.conf_page_num)
         
-    def read_page(self, address: int):
+    def read_page(self, address: int) -> bytes:
         """access a two byte firmware word by word address"""
 
         page_num, word_num = divmod(self.word_address, intelhex.PAGELEN)
@@ -774,8 +781,7 @@ class BLoadTarget():
             raise AddressError
             
         page = self.firmware[page_num]
-        print(page_num, page)
-        data = bytearray(page)
+        data = bytes(page)
 
         print(f'data: {page_num} {data}')
     
