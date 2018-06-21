@@ -680,6 +680,7 @@ class BLoadProc(Proc):
 
         data = bytes(info)
         print('info sum:', hex(self.calc_crc(data)[0]))
+        self.ser_out(data)
         self.ser_out(self.calc_crc(data))
 
     def boot_config(self):
