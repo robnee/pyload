@@ -44,12 +44,11 @@ class Page:
     >>> p[23] = 0x5f
     >>> p[5:7] = '12345678'
     >>> p[9] = 'FF3F'
-    >>> Page.NULLVAL = b'..'
     >>> format(p)
     '        4F2C        12345678        FF3F                                                    5F00                            9F6C'
     >>> p[6], p[9]
     (30806, 16383)
-    >>> bytes(p)
+    >>> p.tobytes(b'..')
     b'....O,....\x124Vx....\xff?.........................._\x00..............\x9fl'
     >>> p[PAGELEN] = '77'
     Traceback (most recent call last):
@@ -64,11 +63,9 @@ class Page:
     "Page('00308C0001308D002100EA3099001A1C172888018C1425238C1025231A28    00308C0001308D002100EA3099001A1C172888018C1425238C1025231A28    ')"
     >>> q.display(0)
     '000-0000 : |00308C0001308D00 2100EA3099001A1C 172888018C142523 8C1025231A28    |\n000-0010 : |00308C0001308D00 2100EA3099001A1C 172888018C142523 8C1025231A28    |'
-    >>> bytes(q)
+    >>> q.tobytes(b'..')
     b'\x000\x8c\x00\x010\x8d\x00!\x00\xea0\x99\x00\x1a\x1c\x17(\x88\x01\x8c\x14%#\x8c\x10%#\x1a(..\x000\x8c\x00\x010\x8d\x00!\x00\xea0\x99\x00\x1a\x1c\x17(\x88\x01\x8c\x14%#\x8c\x10%#\x1a(..'
     """
-
-    NULLVAL = b'\xff\xff'
 
     def __init__(self, s=None):
         if s is None:
@@ -123,8 +120,7 @@ class Page:
         self.page[key] = value
 
     def __bytes__(self):
-        x = [w.to_bytes(2, 'little') if w is not None else self.NULLVAL for w in self.page]
-        return b''.join(x)
+        return self.tobytes(b'\xff\xff')
 
     def __str__(self):
         def fmt(w):
@@ -141,7 +137,12 @@ class Page:
         if len(self.page) < PAGELEN:
             self.page.extend([None] * (PAGELEN - len(self.page)))
 
-    def display(self, page_num):
+    def tobytes(self, null: bytes):
+        """convert to bytes with None words set to the null value"""
+        x = [w.to_bytes(2, 'little') if w is not None else null for w in self.page]
+        return b''.join(x)
+
+    def display(self, page_num: int):
         """format page for display purposes"""
 
         disp = str(self)
