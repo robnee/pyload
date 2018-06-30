@@ -33,8 +33,9 @@ CMD_RESET_ADDRESS = b'\x16'
 class Port:
     def __init__(self):
         self._dtr = False
-        self.clear()
-        
+        self.inq = bytes()
+        self.outq = bytes()
+
     def clear(self):
         self.inq = bytes()
         self.outq = bytes()
@@ -408,220 +409,6 @@ class ICSPHost(Port):
         self.proc.run()
 
 
-"""
-;   Commands:
-;
-;   C [CHK]
-;   Reads a page of config memory, idlocs, chip id, config and calibration words
-;
-;   I [CHK]
-;   Reports bootloader interface version [1 byte], page of bootloader start
-;   address, page of bootloader end address, and page of start of eeprom address.
-;   4 bytes total.
-;
-;   R [ADR] [CHK]
-;   Reads a page of flash program memory.  The command is 4 bytes long, 1 byte
-;   for the command character 'R', two for the address and 1 checksum byte.
-;   This command returns [DATA] followed by [CHK] (65 bytes total)
-;
-;   W [ADR] [DATA] [CHK]
-;   Writes a page to flash program memory.  The command is 68 bytes long, 1 byte
-;   for the command character 'W', two for the address, a 64 byte data frame and
-;   a checksum byte.
-;
-;   E [ADR] [CHK]
-;   Erases a page of flash program memory.  The command is 4 bytes long, 1 byte
-;   for the command character 'E', two for the address and 1 checksum byte.
-;
-;   D [ADR] [DATA] [CHK]
-;   Write a page of flash data memory.  The command is 68 bytes long, 1 byte
-;   for the command character 'D', two for the address, a 64 byte data frame and
-;   a checksum byte.  Hex files generally choose a high address to represent
-;   data memory but the boot loader expects the address in the low byte of address
-;   and a zero in the high byte.
-;
-;   F [ADR] [CHK]
-;   Reads a page of flash data memory.  The command is 4 bytes long, 1 byte
-;   for the command character 'F', two for the address and 1 checksum byte.
-;   the high byte of the address is ignored.
-;   This command returns [DATA] followed by [CHK] (65 bytes total)
-;   Where:
-;
-;   T [ADR] [CHK]
-;   Test address is writable, i.e. not a protected bootloader address  Does not
-;   test if address is out of range.
-;   This command responds with the (K) prompt if address is writable and (R) if
-;   address is restricted.
-;
-;   Z
-;   Resets the processor
-;
-;   [ADR] - The address is two bytes long and is sent low byte first.  The range
-;   of address (for the 16F819) is 0x0000 - 0x07FF for Read and 0x0020 - 0x06FF
-;   for read and write.
-;
-;   [CHK] - A simple checksum of the databytes transmitted for error checking
-;   When appended to commands the checksum EXCLUDES the first command byte.
-;
-;   [DATA] - represents an entire page of flash program memory.  The page is
-;   organized as 32 low byte/high byte pairs.
-;
-;   Return Codes:
-;   K - Ready to accept the next command
-;   R - Address range error
-;   C - Data checksum error
-;   E - Invalid command
-;
-;   When a command complete successfully the 'K' prompt will be all that is
-;   sent.  There is no success code.  The absense of a R or C error code is
-;   enough to indicate success.
-;
-
-;-------------------------------------------------------------------------------
-; Main bootloader interface handler.  sits in a loop and processes commands
-; Hard reset to exit.
-
-
-boot_main
-        ; Main loop
-        loop
-
-         clrf       boot_crc
-
-         ; Prompt
-         movlw      'K'
-         call       __ser_out
-
-         ; Wait for and get command character
-         call       __ser_wait
-
-         ; Dispatch command
-         switch
-         case 'C'   ; Read Config Words
-          call      boot_check
-          banksel   EEADRH
-          clrf      EEADRH
-          clrf      EEADRL
-          call      flash_cfg_select
-          call      boot_read
-         endcase
-
-         case 'I'   ; Read Bootloader Info
-          call      boot_check
-          call      boot_info
-         endcase
-
-         case 'R'   ; Read Program Block
-          call      boot_address
-          call      boot_check
-          call      flash_pgm_select
-          call      boot_read
-         endcase
-
-         case 'W'  ; Write Program Block
-          call      boot_address
-          call      boot_load_data
-          call      boot_check
-          call      boot_range
-          call      boot_clear_gie
-          call      flash_pgm_erase
-          call      flash_pgm_write
-          call      boot_restore_gie
-         endcase
-
-         case 'E'   ; Erase Program block
-          call      boot_address
-          call      boot_check
-          call      boot_clear_gie
-          call      flash_pgm_erase
-          call      boot_restore_gie
-         endcase
-
-         case 'D'   ; Write Data Block
-          call      boot_address
-          call      boot_load_data
-          call      boot_check
-          call      boot_clear_gie
-          call      flash_dat_write
-          call      boot_restore_gie
-         endcase
-
-         case 'T'  ; Test address
-          call      boot_address
-          call      boot_check
-          call      boot_range
-         endcase
-
-         case 'F'   ; Read Data Block
-          call      boot_address
-          call      boot_check
-          call      flash_dat_select
-          clrf      EEDATH ; Data reads don't populate EEDATH
-          call      boot_read
-         endcase
-
-         case 'Z'   ; Reset and exit bootloader
-          reset
-         endcase
-
-         default
-          ; Error
-          movlw     'E'
-          call      __ser_out
-         endswitch
-
-        endloop
-
-boot_info_table
-        brw
-
-        ; unused
-        dt  0
-        dt  0
-        dt  0
-        dt  0
-
-        ; page num of end of code region
-        dt  HIGH(__CODE_END)
-        dt  LOW(__CODE_END)
-
-        ; page num of start and end eeprom data region
-#ifdef PMCON1
-        dt  0
-        dt  0
-        dt  0
-        dt  0
-#else
-        dt  HIGH(__EEPROM_END)
-        dt  LOW(__EEPROM_END)
-        dt  HIGH(__EEPROM_START)
-        dt  LOW(__EEPROM_START)
-#endif
-        ; address of start and end of bootloader region
-        dt  HIGH(BOOT_SIZE)
-        dt  LOW(BOOT_SIZE)
-        dt  HIGH(boot_loader)
-        dt  LOW(boot_loader)
-        ; pagesize in words (2 bytes each)
-        dt  BOOT_PAGESIZE / 2
-        ; version number
-        dt  BOOT_VERSION
-
-BOOT_PAGESIZE       equ 0x40        ; Size of a data page in bytes
-BOOT_VERSION        equ 0x15        ; Version interface spec
-BOOT_SIZE           equ 0x180       ; Bootloader region size
-
-; __CODE_END                        CONSTANT      00000FFF           4095
-; __CODE_START                      CONSTANT      00000000              0
-; __COMMON_RAM_END                  CONSTANT      0000007F            127
-; __COMMON_RAM_START                CONSTANT      00000070            112
-; __CONFIG_END                      CONSTANT      00008008          32776
-; __CONFIG_START                    CONSTANT      00008007          32775
-; __EEPROM_END                      CONSTANT      0000F0FF          61695
-; __EEPROM_START                    CONSTANT      0000F000          61440
-
-"""
-
 class AddressError(Exception):
     """Raised when on a restricted address"""
 
@@ -637,15 +424,87 @@ class ChecksumError(Exception):
         
         
 class BLoadProc(Proc):
-    """equivalent to the bootloader software"""
+    """
+    ;   Commands:
+    ;
+    ;   C [CHK]
+    ;   Reads a page of config memory, idlocs, chip id, config and calibration words
+    ;
+    ;   I [CHK]
+    ;   Reports bootloader interface version [1 byte], page of bootloader start
+    ;   address, page of bootloader end address, and page of start of eeprom address.
+    ;   4 bytes total.
+    ;
+    ;   R [ADR] [CHK]
+    ;   Reads a page of flash program memory.  The command is 4 bytes long, 1 byte
+    ;   for the command character 'R', two for the address and 1 checksum byte.
+    ;   This command returns [DATA] followed by [CHK] (65 bytes total)
+    ;
+    ;   W [ADR] [DATA] [CHK]
+    ;   Writes a page to flash program memory.  The command is 68 bytes long, 1 byte
+    ;   for the command character 'W', two for the address, a 64 byte data frame and
+    ;   a checksum byte.
+    ;
+    ;   E [ADR] [CHK]
+    ;   Erases a page of flash program memory.  The command is 4 bytes long, 1 byte
+    ;   for the command character 'E', two for the address and 1 checksum byte.
+    ;
+    ;   D [ADR] [DATA] [CHK]
+    ;   Write a page of flash data memory.  The command is 68 bytes long, 1 byte
+    ;   for the command character 'D', two for the address, a 64 byte data frame and
+    ;   a checksum byte.  Hex files generally choose a high address to represent
+    ;   data memory but the boot loader expects the address in the low byte of address
+    ;   and a zero in the high byte.
+    ;
+    ;   F [ADR] [CHK]
+    ;   Reads a page of flash data memory.  The command is 4 bytes long, 1 byte
+    ;   for the command character 'F', two for the address and 1 checksum byte.
+    ;   the high byte of the address is ignored.
+    ;   This command returns [DATA] followed by [CHK] (65 bytes total)
+    ;   Where:
+    ;
+    ;   T [ADR] [CHK]
+    ;   Test address is writable, i.e. not a protected bootloader address  Does not
+    ;   test if address is out of range.
+    ;   This command responds with the (K) prompt if address is writable and (R) if
+    ;   address is restricted.
+    ;
+    ;   Z
+    ;   Resets the processor
+    ;
+    ;   [ADR] - The address is two bytes long and is sent low byte first.  The range
+    ;   of address (for the 16F819) is 0x0000 - 0x07FF for Read and 0x0020 - 0x06FF
+    ;   for read and write.
+    ;
+    ;   [CHK] - A simple checksum of the databytes transmitted for error checking
+    ;   When appended to commands the checksum EXCLUDES the first command byte.
+    ;
+    ;   [DATA] - represents an entire page of flash program memory.  The page is
+    ;   organized as 32 low byte/high byte pairs.
+    ;
+    ;   Return Codes:
+    ;   K - Ready to accept the next command
+    ;   R - Address range error
+    ;   C - Data checksum error
+    ;   E - Invalid command
+    ;
+    ;   When a command complete successfully the 'K' prompt will be all that is
+    ;   sent.  There is no success code.  The absense of a R or C error code is
+    ;   enough to indicate success.
+    ;
+    """
     
     BOOT_VERSION = 0x15
     BOOT_PAGESIZE = 0x40
+    BOOT_START = 0x680
+    BOOT_SIZE = 0x180
+    BOOT_END = BOOT_START + BOOT_SIZE - 1
 
     def __init__(self, port: Port, device_name: str, firmware: intelhex.Hexfile=None):
         Proc.__init__(self, port)
         self.boot_crc = 0
         self.address = 0
+        self.boot_data = bytearray(intelhex.PAGEBYTES)
         self.reset_time = 0
         self.running = False
         self.target = BLoadTarget(device_name, firmware)
@@ -661,26 +520,39 @@ class BLoadProc(Proc):
 
     def boot_check(self):
         c = self.ser_get()
-        if self.crc % 0x100 != c[0]:
+        if self.boot_crc % 0x100 != c[0]:
             self.ser_out(b'C')
-            raise ChecksumError(c[0], self.crc)
+            raise ChecksumError(c[0], self.boot_crc)
     
     def boot_address(self):
         self.address = self.ser_get_word()
-        self.crc = sum(divmod(self.address, 0x100))
-        
+        self.boot_crc = sum(divmod(self.address, 0x100))
+
+    def boot_range(self):
+        """check if address is in range and raise an exception if not"""
+        if self.BOOT_START <= self.address < self.BOOT_END:
+            raise AddressError(self.address)
+
+    def boot_load_data(self):
+        """read a page of data from the host"""
+        for idx in range(intelhex.PAGEBYTES):
+            byte = self.ser_get()[0]
+            self.boot_data[idx] = byte
+
+        self.boot_crc += sum(self.boot_data)
+
     def calc_crc(self, data: bytes):
-         crc = sum(data) % 0x100
+        crc = sum(data) % 0x100
          
-         return bytes([crc])
+        return bytes([crc])
 
     def boot_info(self):
         """send bootloader info record"""
         info = [
             self.BOOT_VERSION,
             self.BOOT_PAGESIZE // 2,
-            *reversed(divmod(self.target.boot_start, 0x100)),
-            *reversed(divmod(self.target.boot_size, 0x100)),
+            *reversed(divmod(self.BOOT_START, 0x100)),
+            *reversed(divmod(self.BOOT_SIZE, 0x100)),
             *reversed(divmod(self.target.eeprom_start, 0x100)),
             *reversed(divmod(self.target.eeprom_end, 0x100)),
             *reversed(divmod(self.target.code_end, 0x100)),
@@ -709,7 +581,13 @@ class BLoadProc(Proc):
             
         self.ser_out(data)
         self.ser_out(self.calc_crc(data))
-    
+
+    def flash_erase(self):
+        self.target.erase_page(self.address)
+
+    def flash_write(self):
+        self.target.write_page(self.address, self.boot_data)
+
     def run(self):
         """dispatch incoming commands"""
         if not self.running:
@@ -721,7 +599,7 @@ class BLoadProc(Proc):
             # command
             c = self.ser_get()
             
-            self.crc = 0
+            self.boot_crc = 0
 
             # dispatch
             if c == b'C':  # read config words
@@ -738,26 +616,22 @@ class BLoadProc(Proc):
                 self.boot_address()
                 self.boot_check()
                 self.boot_read(b'\xff\x00')
-                
-            elif c = b'W':  # write program page
+            elif c == b'W':  # write program page
                 self.boot_address()
                 self.boot_load_data()
                 self.boot_check()
-                call      boot_range
-                call      flash_pgm_erase
-                call      flash_pgm_write
-            elif c = b'D':  # write data page
+                self.boot_range()
+                self.flash_erase()
+                self.flash_write()
+            elif c == b'D':  # write data page
                 self.boot_address()
                 self.boot_load_data()
                 self.boot_check()
-                call      flash_dat_write
-
-            elif c = b'E':  # erase program page
+                self.flash_write()
+            elif c == b'E':  # erase program page
                 self.boot_address()
                 self.boot_check()
-                call      flash_pgm_erase
-                pass
-
+                self.flash_erase()
             elif c == b'T':  # test address
                 self.boot_info()
             elif c == b'Z':  # reset
@@ -769,11 +643,9 @@ class BLoadProc(Proc):
             self.ser_out(b'K')
 
 
-class BLoadTarget():
+class BLoadTarget:
     """represents the processor being self-programmed by he bootloader"""
 
-    BOOT_LOADER = 0x680
-    BOOT_SIZE = 0x180
     BOOT_PAGESIZE = 0x40
     
     def __init__(self, device_name, firmware):
@@ -781,14 +653,6 @@ class BLoadTarget():
         self.word = b''
 
         self.device = picdevice.find_by_name(device_name)
-
-    @property
-    def boot_start(self):
-        return self.BOOT_LOADER
-        
-    @property
-    def boot_size(self):
-        return self.BOOT_SIZE
 
     @property
     def code_end(self):
@@ -806,11 +670,6 @@ class BLoadTarget():
     def conf_page_num(self):
         return self.device['conf_page']
             
-    def _boot_range(self, address):
-        """check if address is in range and raise an exception if not"""
-        if address > 100:  # TODO:
-            raise RangeError(address)
-
     def read_config(self) -> bytes:
         """read config words"""
         page_num = self.conf_page_num
@@ -822,7 +681,7 @@ class BLoadTarget():
         return bytes(page)
 
     def read_page(self, address: int, null: bytes) -> bytes:
-        """access a two byte firmware word by word address"""
+        """access a firmware page word address"""
         page_num, word_num = divmod(address, intelhex.PAGELEN)
         if word_num != 0:
             raise AddressError
@@ -830,6 +689,28 @@ class BLoadTarget():
         page = self.firmware[page_num]
         
         return page.tobytes(null) if page else None
+
+    def erase_page(self, address):
+        page_num, word_num = divmod(address, intelhex.PAGELEN)
+        if word_num != 0:
+            raise AddressError
+
+        del self.firmware[page_num]
+
+    def write_page(self, address: int, data: bytes):
+        """update a firmware page"""
+        page_num, word_num = divmod(address, intelhex.PAGELEN)
+        if word_num != 0:
+            raise AddressError
+
+        page = intelhex.Page(data)
+
+        # Remove NULL words
+        for offset in range(0, len(page)):
+            if page[offset] == 0xFFFF:
+                page[offset] = None
+
+        self.firmware[page_num] = page
 
 
 class BLoadHost(Port):
