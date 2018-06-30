@@ -77,7 +77,7 @@ class Page:
                 raise ValueError(f'string len { len(s) } greater than {PAGELEN * 4} hex digits')
 
             self.page = [None if x == '    ' else int(x[:2], 16) + (int(x[2:], 16) << 8) for x in chunks(s, 4)]
-        elif type(s) == bytes:
+        elif type(s) in (bytes, bytearray):
             if len(s) > PAGELEN * 2:
                     raise ValueError(f'bytes len {len(s)} greater than of {PAGELEN * 2}')
 
@@ -175,6 +175,9 @@ class Hexfile:
             return self.page_list[key]
         except IndexError:
             return None
+
+    def __delitem__(self, key):
+        self.page_list[key] = None
 
     def __len__(self):
         return len(self.page_list)
