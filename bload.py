@@ -245,21 +245,19 @@ def read_program(com, page_nums) -> intelhex.Hexfile:
 
     prog_list = read_pages(com, b'R', page_nums)
 
-    pages = intexhex.Hexfile()
+    pages = intelhex.Hexfile()
 
     for page_num, data in zip(page_nums, prog_list):
         if data:
             page = intelhex.Page(data)
 
             # Remove NULL words
-            for offset in range(0, len(page), 2):
-                word = page[offset: offset + 2]
-                if word == ['FF', '3F']:
+            for offset in range(0, len(page)):
+                if page[offset] == 0x3FFF:
                     page[offset] = None
-                    page[offset + 1] = None
 
-            if any(page):
-                pages[page_num] = page
+        if any(page):
+            pages[page_num] = page
 
     return pages
 
@@ -276,11 +274,9 @@ def read_data(com, page_nums) -> intelhex.Hexfile:
             page = intelhex.Page(data)
 
             # Remove NULL words and force unused high word to 00
-            for offset in range(0, len(page), 2):
-                word = [page[offset], '00']
-                if word == ['FF', '00']:
+            for offset in range(0, len(page)):
+                if page[offset] == 0x00FF:
                     page[offset] = None
-                    page[offset + 1] = None
 
             if any(page):
                 pages[page_num] = page
