@@ -738,6 +738,25 @@ class BLoadProc(Proc):
                 self.boot_address()
                 self.boot_check()
                 self.boot_read(b'\xff\x00')
+                
+            elif c = b'W':  # write program page
+                self.boot_address()
+                self.boot_load_data()
+                self.boot_check()
+                call      boot_range
+                call      flash_pgm_erase
+                call      flash_pgm_write
+            elif c = b'D':  # write data page
+                self.boot_address()
+                self.boot_load_data()
+                self.boot_check()
+                call      flash_dat_write
+
+            elif c = b'E':  # erase program page
+                self.boot_address()
+                self.boot_check()
+                call      flash_pgm_erase
+                pass
 
             elif c == b'T':  # test address
                 self.boot_info()
