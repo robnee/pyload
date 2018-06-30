@@ -430,6 +430,7 @@ def program(com: comm.Comm, args):
 
                 prog_pages = bload.read_program(com, prog_check_list)
                 data_pages = bload.read_data(com, data_check_list)
+                sys.stdout.write('\n')
 
                 check_firmware = prog_pages + data_pages
                 check_list = prog_check_list + data_check_list
@@ -438,9 +439,9 @@ def program(com: comm.Comm, args):
                 if errors:
                     for page_num in errors:
                         print("File:")
-                        file_firmware[page_num].display(page_num)
+                        print(file_firmware[page_num].display(page_num))
                         print("Chip:")
-                        check_firmware[page_num].display(page_num)
+                        print(check_firmware[page_num].display(page_num))
 
                     print("\nWARNING!\n",
                           "Error verifying firmware.  Do not power down target.\n",
@@ -449,8 +450,6 @@ def program(com: comm.Comm, args):
                     # Wait for confirmation
                     input()
                     continue
-
-                sys.stdout.write('\n')
 
             # Done
             break
