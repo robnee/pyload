@@ -272,7 +272,7 @@ def read_data(com, page_nums) -> intelhex.Hexfile:
     for page_num, data in zip(page_nums, data_list):
         if data:
             page = intelhex.Page(data)
-            print(page)
+
             # Remove NULL words and force unused high word to 00
             for offset in range(0, len(page)):
                 if page[offset] == 0x00FF:

@@ -197,7 +197,35 @@ def run_range_test(com):
             print('avail:', avail, 'data:', data)
 
 
-def program(com: comm.Comm):
+def read_firmware(com, conf_page_num, prog_list, data_list):
+    """read firmware from target and tweak so that it can be written in standard
+    Microchip format.  Certain words such as chip id and calibration for example
+    need to be blanked."""
+    prog_pages = bload.read_program(com, prog_list)
+    data_pages = bload.read_data(com, data_list)
+    
+    firmware = prog_pages + data_pages
+
+    # Get config page data and tweak to read-only regions
+    conf_data = bload.read_config(com)
+    conf_page = intelhex.Page(conf_data)
+
+    # blank out any empty user ID locations
+    for i in range(0, 4):
+        if conf_page[i] == 0x3FFF:
+            conf_page[i] = None
+
+    # Blank out 0x04, reserved, revision and chip_id
+    conf_page[4: 7] = None
+    # blank out calibration words
+    conf_page[9: 17] = None
+
+    firmware[conf_page_num] = conf_page
+
+    return firmware
+
+    
+def program(com: comm.Comm, args):
     """ main """
 
     start_time = time.time()
@@ -239,7 +267,7 @@ def program(com: comm.Comm):
             break
 
     if count == 0 or value != b'K':
-        print('[{}, {}] Could not find boot loader on {}\n'.format(count, value, args.port))
+        print('[{}, {}] Could not find boot loader on {}\n'.format(count, value, comm.ser.port))
         return
 
     print('Connected...')
@@ -251,7 +279,7 @@ def program(com: comm.Comm):
     if boot_version >= 0x14:
         # Recompute word addresses as page addresses
         boot_start = (boot_start & 0x7FFF) // boot_pagesize
-        boot_end = boot_start + boot_size // boot_pagesize - 1
+        boot_end = boot_start + (boot_size // boot_pagesize) - 1
         code_end //= boot_pagesize
         data_start //= boot_pagesize
         data_end //= boot_pagesize
@@ -263,12 +291,9 @@ def program(com: comm.Comm):
         config = bload.read_config(com)
 
         user_id = ""
-        for b in config[0: 4 * 2: 2]:
-            user_id += '{:X}'.format(b & 0x0F)
+        for word in config[0: 4 * 2: 2]:
+            user_id += '{:X}'.format(word & 0x0F)
 
-        x = config[6 * 2: 7 * 2]
-        y = int.from_bytes(x, 'little')
-        z = hex(y)
         device_id = int.from_bytes(config[6 * 2: 7 * 2], 'little') >> 5
         device_rev = int.from_bytes(config[6 * 2: 7 * 2], 'little') & 0x1F
         config_words = int.from_bytes(config[7 * 2: 9 * 2], 'little')
@@ -281,12 +306,12 @@ def program(com: comm.Comm):
 
     print("\nBootloader Version: %02X\n"
           "Page Size:          0x%02X\n"
-          "Bootloader Region:  0x%04X - 0x%04X\n"
-          "Program Region:     0x%04X - 0x%04X\n"
-          "EEPROM Data Region: 0x%04X - 0x%04X\n" %
+          "Bootloader Region:  0x%03X - 0x%03X\n"
+          "Program Region:     0x%03X - 0x%03X\n"
+          "EEPROM Data Region: 0x%03X - 0x%03X\n" %
           (boot_version, boot_pagesize, boot_start, boot_end, 0, code_end, data_start, data_end))
 
-    print("CONFIG User ID: %s  Device ID: %04X %s Rev: %1X  Config Words: %s" %
+    print("CONFIG User ID: %s  Device ID: %04X %s Rev: %1X  Config Words: %x" %
           (user_id, device_id, device_name, device_rev, config_words))
 
     # Set ranges and addresses based on the bootloader config and device information
@@ -297,6 +322,7 @@ def program(com: comm.Comm):
     max_data = picdevice.PARAM[device_id]['max_data']
 
     if min_data != data_start or max_data != data_end:
+        print("Error:")
         print("min_data=", min_data, 'max_data=', max_data)
         print("data_start=", data_start, 'data_end=', data_end)
 
@@ -317,42 +343,13 @@ def program(com: comm.Comm):
         sys.stdout.write("Reading Bootloader  ")
         chip_firmware = bload.read_program(com, [0] + boot_list)
         print()
-
-    elif boot_version > 0x11:
-        sys.stdout.write("Reading Firmware    ")
-        prog_pages = bload.read_program(com, prog_list)
-        data_pages = bload.read_data(com, data_list)
-        print()
-
-        chip_firmware = prog_pages + data_pages
-
-        # blank out stuff that shouldn't get written including the undefined words
-        conf_str = hexfile.bytes_to_hex(config)
-
-        # blank out any empty user ID locations
-        user_id = ""
-        for i in range(0, 4 * 4, 4):
-            if conf_str[i: i + 4] == "FF3F":
-                user_id += "    "
-            else:
-                user_id += conf_str[i: i + 4]
-
-        conf_str = user_id + "    " * 2 + conf_str[6 * 4:9 * 4] + "    " * 23
-
-        # Add config page
-        chip_firmware[conf_page] = intelhex.Page(conf_str)
-
-        if not args.quiet:
-            print(chip_firmware.display())
-
-        # blank chip id so this will compare to file_firmware
-        conf_str = conf_str[:6 * 4] + '    ' + conf_str[7 * 4:]
-        chip_firmware[conf_page] = intelhex.Page(conf_str)
-
     else:
-        print('unsupported bootloader version:', boot_version)
-        chip_firmware = None
-
+        sys.stdout.write("Reading Firmware    ")
+        chip_firmware = read_firmware(com, conf_page, prog_list, data_list)
+        if not args.quiet:
+            print()
+            print(chip_firmware.display())
+        
     if args.read:
         print('Saving firmware to', args.filename, '...')
         with open(args.filename, mode='w') as fp:
@@ -473,7 +470,7 @@ def program(com: comm.Comm):
     print(f"elapsed time: {time.time() - start_time:0.2f} seconds")
 
 
-if __name__ == "__main__":
+def run(argv=None):
     parser = argparse.ArgumentParser(prog='pyload', description='pyload Bload bootloader tool.')
     parser.add_argument('-p', '--port', default=DEFAULT_PORT, help=f'serial device ({DEFAULT_PORT})')
     parser.add_argument('-b', '--baud', default=DEFAULT_BAUD, help='baud rate')
@@ -488,11 +485,7 @@ if __name__ == "__main__":
 
     parser.add_argument('filename', default=None, nargs='?', action='store', help='HEX filename')
 
-    # pass arguments explicitly to ease overriding
-    argv = sys.argv[1:]
-    #argv = ['-r', 'x.hex']
-
-    args = parser.parse_args(args=argv)
+    args = parser.parse_args(args=argv if argv else sys.argv[1:])
 
     # reading and fast mode are incompatible
     if args.read and args.fast:
@@ -531,8 +524,12 @@ if __name__ == "__main__":
 
         # Check for commands that require a filename
         if args.filename is not None:
-            program(ser_com)
+            program(ser_com, args)
         
         if args.term:
             ser_com.pulse_dtr(0.250)
             term.terminal(ser_com)
+            
+
+if __name__ == "__main__":
+    run()
