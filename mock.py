@@ -678,7 +678,7 @@ class BLoadTarget:
         chip_id = (0b10_0111_000 << 5) + 0b0_0101
         page[6] = chip_id
         
-        return bytes(page)
+        return page.tobytes(b'\xff\x3f')
 
     def read_page(self, address: int, null: bytes) -> bytes:
         """access a firmware page word address"""

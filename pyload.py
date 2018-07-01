@@ -210,15 +210,15 @@ def read_firmware(com, conf_page_num, prog_list, data_list):
     conf_data = bload.read_config(com)
     conf_page = intelhex.Page(conf_data)
 
-    # blank out any empty user ID locations
-    for i in range(0, 4):
-        if conf_page[i] == 0x3FFF:
-            conf_page[i] = None
-
     # Blank out 0x04, reserved, revision and chip_id
     conf_page[4: 7] = None
     # blank out calibration words
     conf_page[9: 17] = None
+
+    # blank out any empty locations
+    for i in range(intelhex.PAGELEN):
+        if conf_page[i] == 0x3FFF:
+            conf_page[i] = None
 
     firmware[conf_page_num] = conf_page
 
