@@ -507,7 +507,8 @@ class BLoadProc(Proc):
         self.boot_data = bytearray(intelhex.PAGEBYTES)
         self.reset_time = 0
         self.running = False
-        self.target = BLoadTarget(device_name, firmware)
+        self.device = picdevice.find_by_name(device_name)
+        self.firmware = firmware
 
     def reset(self):
         """reset ICSP host"""
@@ -517,6 +518,22 @@ class BLoadProc(Proc):
         """break handler"""
         self.running = True
         self.ser_out(b'K')
+
+    @property
+    def code_end(self):
+        return (self.device['max_page'] + 1) * self.BOOT_PAGESIZE // 2 - 1
+
+    @property
+    def eeprom_start(self):
+        return self.device['min_data'] * self.BOOT_PAGESIZE // 2
+
+    @property
+    def eeprom_end(self):
+        return self.device['max_data'] * self.BOOT_PAGESIZE // 2 
+    
+    @property
+    def conf_page_num(self):
+        return self.device['conf_page']
 
     def boot_check(self):
         c = self.ser_get()
@@ -545,6 +562,13 @@ class BLoadProc(Proc):
         crc = sum(data) % 0x100
          
         return bytes([crc])
+        
+    def get_page_num(self):
+        page_num, word_num = divmod(self.address, intelhex.PAGELEN)
+        if word_num != 0:
+            raise AddressError
+
+        return page_num
 
     def boot_info(self):
         """send bootloader info record"""
@@ -553,9 +577,9 @@ class BLoadProc(Proc):
             self.BOOT_PAGESIZE // 2,
             *reversed(divmod(self.BOOT_START, 0x100)),
             *reversed(divmod(self.BOOT_SIZE, 0x100)),
-            *reversed(divmod(self.target.eeprom_start, 0x100)),
-            *reversed(divmod(self.target.eeprom_end, 0x100)),
-            *reversed(divmod(self.target.code_end, 0x100)),
+            *reversed(divmod(self.eeprom_start, 0x100)),
+            *reversed(divmod(self.eeprom_end, 0x100)),
+            *reversed(divmod(self.code_end, 0x100)),
             0x0,
             0x0,
             0x0,
@@ -567,26 +591,49 @@ class BLoadProc(Proc):
         self.ser_out(self.calc_crc(data))
 
     def boot_config(self):
-        """ send config words """
-        data = self.target.read_config()
+        """read config words"""
+        page_num = self.conf_page_num
+        page = self.firmware[page_num]
+
+        chip_id = (0b10_0111_000 << 5) + 0b0_0101
+        page[6] = chip_id
+        
+        data = page.tobytes(b'\xff\x3f')
         
         self.ser_out(data)
         self.ser_out(self.calc_crc(data))
 
     def boot_read(self, null):
         """ send program words """
-        data = self.target.read_page(self.address, null)
-        if not data:
+        page_num = self.get_page_num()
+        page = self.firmware[page_num]
+        
+        if page:
+            data = page.tobytes(null)
+        else:
             data = null * intelhex.PAGELEN
-            
+        
         self.ser_out(data)
         self.ser_out(self.calc_crc(data))
 
     def flash_erase(self):
-        self.target.erase_page(self.address)
+        """erase program page"""
+        page_num = self.get_page_num()
+
+        if self.firmware[page_num]:
+            del self.firmware[page_num]
 
     def flash_write(self):
-        self.target.write_page(self.address, self.boot_data)
+        """update a firmware page"""
+        page_num = self.get_page_num()
+        page = intelhex.Page(self.boot_data)
+
+        # Remove NULL words
+        for offset in range(0, len(page)):
+            if page[offset] == 0xFFFF:
+                page[offset] = None
+
+        self.firmware[page_num] = page
 
     def run(self):
         """dispatch incoming commands"""
@@ -641,77 +688,7 @@ class BLoadProc(Proc):
                 self.ser_out(b'E')
 
             self.ser_out(b'K')
-
-
-class BLoadTarget:
-    """represents the processor being self-programmed by he bootloader"""
-
-    BOOT_PAGESIZE = 0x40
-    
-    def __init__(self, device_name, firmware):
-        self.firmware = firmware
-        self.word = b''
-
-        self.device = picdevice.find_by_name(device_name)
-
-    @property
-    def code_end(self):
-        return (self.device['max_page'] + 1) * self.BOOT_PAGESIZE // 2 - 1
-
-    @property
-    def eeprom_start(self):
-        return self.device['min_data'] * self.BOOT_PAGESIZE // 2
-
-    @property
-    def eeprom_end(self):
-        return self.device['max_data'] * self.BOOT_PAGESIZE // 2 
-    
-    @property
-    def conf_page_num(self):
-        return self.device['conf_page']
-            
-    def read_config(self) -> bytes:
-        """read config words"""
-        page_num = self.conf_page_num
-        page = self.firmware[page_num]
-
-        chip_id = (0b10_0111_000 << 5) + 0b0_0101
-        page[6] = chip_id
         
-        return page.tobytes(b'\xff\x3f')
-
-    def read_page(self, address: int, null: bytes) -> bytes:
-        """access a firmware page word address"""
-        page_num, word_num = divmod(address, intelhex.PAGELEN)
-        if word_num != 0:
-            raise AddressError
-            
-        page = self.firmware[page_num]
-        
-        return page.tobytes(null) if page else None
-
-    def erase_page(self, address):
-        page_num, word_num = divmod(address, intelhex.PAGELEN)
-        if word_num != 0:
-            raise AddressError
-
-        del self.firmware[page_num]
-
-    def write_page(self, address: int, data: bytes):
-        """update a firmware page"""
-        page_num, word_num = divmod(address, intelhex.PAGELEN)
-        if word_num != 0:
-            raise AddressError
-
-        page = intelhex.Page(data)
-
-        # Remove NULL words
-        for offset in range(0, len(page)):
-            if page[offset] == 0xFFFF:
-                page[offset] = None
-
-        self.firmware[page_num] = page
-
 
 class BLoadHost(Port):
     def __init__(self, device: str, firmware):
@@ -735,4 +712,4 @@ class BLoadHost(Port):
        
 if __name__ == "__main__":
     import pyload
-    pyload.run(['-r', 'x.hex'])
+    pyload.run(['x.hex'])
