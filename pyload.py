@@ -153,7 +153,6 @@ DEFAULT_PORT = '/dev/ttyUSB0'
 
 DATA = 8
 TOUT = 1
-MOCK = True
 
 
 def run_range_test(com):
@@ -499,12 +498,7 @@ def run(argv=None):
         logf = None
 
     print('Initializing communications on {} {} ...'.format(args.port, args.baud))
-    if not MOCK:
-        import serial
-
-        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
-
-    else:
+    if args.port.upper() == 'MOCK':
         import mock
 
         # unless we are reading out the chip firmware read a new file to load
@@ -513,6 +507,10 @@ def run(argv=None):
             mock_firmware.read(fp)
 
         ser = mock.BLoadHost('12F1822', mock_firmware)
+    else:
+        import serial
+
+        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
 
     # create wrapper
     with comm.Comm(ser, logf) as ser_com:

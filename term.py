@@ -35,6 +35,12 @@ def readkey():
         return char
 
 
+def display(data):
+    for c in data:
+        print(chr(c) if c < 0x80 else '.', end='')
+    sys.stdout.flush()
+
+
 def terminal(com):
     """Simple terminal for debugging"""
 
@@ -48,8 +54,7 @@ def terminal(com):
             while com.avail() > 0:
                 count, data = com.read()
                 if count > 0:
-                    print(str(data, 'ascii'), end='')
-                    sys.stdout.flush()
+                    display(data)
 
             # Process terminal input
             key = readkey()
