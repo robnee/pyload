@@ -88,7 +88,6 @@ DEFAULT_PORT = '/dev/ttyUSB0'
 
 # Communications settings
 
-MOCK = True
 DATA = 8
 TOUT = 1
 
@@ -340,12 +339,7 @@ if __name__ == '__main__':
     start_time = time.time()
 
     print('Initializing communications on {} {} ...'.format(args.port, args.baud))
-    if not MOCK:
-        import serial
-
-        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
-
-    else:
+    if args.port.upper() == 'MOCK':
         import mock
 
         # unless we are reading out the chip firmware read a new file to load
@@ -354,6 +348,10 @@ if __name__ == '__main__':
             mock_firmware.read(fp)
 
         ser = mock.ICSPHost('12F1822', mock_firmware)
+    else:
+        import serial
+
+        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
 
     # create wrapper
     with comm.Comm(ser, logf) as ser_com:
