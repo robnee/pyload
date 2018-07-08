@@ -274,7 +274,7 @@ def program(com: comm.Comm, args):
             break
 
     if count == 0 or value != b'K':
-        print('[{}, {}] Could not find boot loader on {}\n'.format(count, value, comm.ser.port))
+        print('[{}, {}] Could not find boot loader on {}\n'.format(count, value, com.port))
         return
 
     print('Connected...')
@@ -283,15 +283,12 @@ def program(com: comm.Comm, args):
     (boot_version, boot_pagesize, boot_start, boot_size,
      data_start, data_end, code_end) = bload.get_info(com)
 
-    if boot_version >= 0x14:
-        # Recompute word addresses as page addresses
-        boot_start = (boot_start & 0x7FFF) // boot_pagesize
-        boot_end = boot_start + (boot_size // boot_pagesize) - 1
-        code_end //= boot_pagesize
-        data_start //= boot_pagesize
-        data_end //= boot_pagesize
-    else:
-        boot_pagesize = bload.PAGESIZE
+    # Recompute word addresses as page addresses
+    boot_start = (boot_start & 0x7FFF) // boot_pagesize
+    boot_end = boot_start + (boot_size // boot_pagesize) - 1
+    code_end //= boot_pagesize
+    data_start //= boot_pagesize
+    data_end //= boot_pagesize
 
     # Get config info
     config = bload.read_config(com)
