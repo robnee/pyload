@@ -165,7 +165,7 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
     for retry in range(5):
         com.write(cmd)
 
-        count, data = com.read(PAGESIZE)
+        data_count, data = com.read(PAGESIZE)
 
         # Check for an error
         if data == b'CK':
@@ -173,8 +173,8 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
                   page_num))
             continue
 
-        if count != PAGESIZE:
-            print('Short page %d [%d]' % (page_num, count))
+        if data_count != PAGESIZE:
+            print('Short page %d [%d]' % (page_num, data_count))
             print(f'[{data}]')
             continue
 
@@ -182,7 +182,8 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
         count, checksum = com.read(1)
         if ord(checksum) != calc_checksum(data):
             print('checksum:', ord(checksum), 'computed:', calc_checksum(data))
-            print('\nChecksum error reading %s page 0x%03x\n' % (cmd, page_num))
+            print('\nChecksum error reading page cmd:%s page:0x%03x\n' % (cmd, page_num))
+            wait_k(com)
             continue
 
         return data
