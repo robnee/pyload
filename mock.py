@@ -84,7 +84,7 @@ class Port:
         """read data from inq"""
         if len(self.inq) < num_bytes:
             # print(f'read: {num_bytes} in: {self.inq} out: {self.outq}')
-            raise EOFError(f'{self.inq} < {num_bytes}')
+            raise EOFError(f'{self.inq} < {num_bytes} out: {self.outq}')
             
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
         # print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}')
@@ -695,7 +695,7 @@ class BLoadHost(Port):
     def __init__(self, device: str, firmware):
         Port.__init__(self)
         
-        self.error_prob = 0.0   
+        self.error_prob = 0.01
         self.proc = BLoadProc(self, device, firmware)
 
     def reset(self):
@@ -710,8 +710,9 @@ class BLoadHost(Port):
         data = super().read(num_bytes)
         if random.random() < self.error_prob:
             index = random.randrange(len(data))
-            data = data[:index] + b'x' + data[index + 1:]
-            print('data error:', num_bytes, len(data))
+            noise = bytes([random.randrange(256)])
+            data = data[:index] + noise + data[index + 1:]
+            print('data error reading', num_bytes)
             
         return data
         
