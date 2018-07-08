@@ -56,60 +56,69 @@ def get_command(cmd_code, page_num: int, data: bytes=None) -> bytes:
     return bytes(cmd_code) + address + data + checksum
 
 
-def wait_k(com) -> bytes:
-    """ Wait for K (OK) prompt """
+def sync(com) -> bool:
+    """ synchronize with the target and prepare it for the next command """
 
-    data = bytes()
-    timeout = 3
+    retries = 3
 
     while True:
         count, prompt = com.read(1)
-
-        data += prompt
         if prompt == b'K':
-            break
+            return True
 
-        # Check timeout
-        timeout -= 1
-        if count == 0 and timeout == 0:
-            break
+        if count == 0:
+            if retries <= 0:
+                break
 
-    return data
+            retries -= 1
+
+        if com.avail() == 0:
+            com.write(b'K')
+
+    return False
 
 
 def get_info(com):
     """request info record from bootloader"""
-    cmd = b'I' + b'\0'
 
-    com.write(cmd)
+    # allow 5 read tries
+    for retry in range(5):
+        cmd = b'I' + b'\0'
 
-    count, data = com.read(16)
+        com.write(cmd)
 
-    # if bootloader responds with less than four bytes assume that it doesn't
-    # support the I command.  Version 0x10, Boot region 0x38 - 0x3F, EEPROM data 0x108
-    if count < 4:
-        return (0,) * 7
+        count, data = com.read(16)
 
-    # Check for an error
-    if data == b'CK':
-        print('\nChecksum error issuing bootloader info command')
-        return (0,) * 7
+        # if bootloader responds with less than four bytes assume that it doesn't
+        # support the I command.  Version 0x10, Boot region 0x38 - 0x3F, EEPROM data 0x108
+        if count < 4:
+            break
 
-    count, checksum = com.read(1)
+        # Check for an error
+        if data == b'CK':
+            print('\nChecksum error issuing bootloader info command')
+            sync(com)
+            continue
 
-    # Check checksum
-    if ord(checksum) != calc_checksum(data):
-        print('\nChecksum error getting bootloader info.  chip:0x%02x calc:0x%02x' %
-              (ord(checksum), calc_checksum(data)))
-        return (0,) * 7
+        count, checksum = com.read(1)
 
-    prompt = wait_k(com)
-    if prompt != b'K':
-        print('Error [%s] bootloader info' % prompt)
-        return (0,) * 7
+        # Check checksum
+        if ord(checksum) != calc_checksum(data):
+            print('\nChecksum error getting bootloader info.  chip:0x%02x calc:0x%02x' %
+                  (ord(checksum), calc_checksum(data)))
+            sync(com)
+            continue
 
-    # return boot_version, boot_start, boot_size, data_start, data_end, code_end
-    return struct.unpack('BBHHHHHxxxx', data)
+        ready = sync(com)
+        if not ready:
+            print('Sync error reading bootloader info')
+            sync(com)
+            continue
+
+        # return boot_version, boot_start, boot_size, data_start, data_end, code_end
+        return struct.unpack('BBHHHHHxxxx', data)
+
+    return (0,) * 7
 
 
 def erase_program_page(com, page_num: int):
@@ -149,13 +158,9 @@ def write_pages(com, cmd: bytes, pages: intelhex.Hexfile, page_nums):
             write_page(com, cmd, page_num, bytes(page))
             show_progress(cmd)
 
-        prompt = wait_k(com)
-        if prompt != b'K':
-            for c in prompt:
-                print('[%02X] ' % c, end='')
-
-            print('Error [%s] writing page 0x%03X:0x%04X' % (prompt, page_num,
-                  page_num * PAGESIZE // 2))
+        ready = sync(com)
+        if not ready:
+            print('Sync error writing page 0x%03X:0x%04X' % (page_num, page_num * PAGESIZE // 2))
             return
 
 
@@ -169,8 +174,7 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
 
         # Check for an error
         if data == b'CK':
-            print('\nChecksum error issuing read attempt %d on page %d' % (retry,
-                  page_num))
+            print('\nChecksum error issuing read attempt %d on page %d' % (retry, page_num))
             continue
 
         if data_count != PAGESIZE:
@@ -182,8 +186,8 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
         count, checksum = com.read(1)
         if ord(checksum) != calc_checksum(data):
             print('checksum:', ord(checksum), 'computed:', calc_checksum(data))
-            print('\nChecksum error reading page cmd:%s page:0x%03x\n' % (cmd, page_num))
-            wait_k(com)
+            print('Checksum error reading page: 0x%03x cmd: %s\n' % (page_num, cmd))
+            sync(com)
             continue
 
         return data
@@ -199,8 +203,8 @@ def read_config(com) -> bytes:
     # Read all pages and create a list
     data = read_page(com, b'C' + b'\0', page_num)
 
-    prompt = wait_k(com)
-    assert prompt == b'K', 'Error [%s] reading config' % prompt
+    ready = sync(com)
+    assert ready, 'Error reading config'
 
     show_progress(b'C')
 
@@ -231,8 +235,8 @@ def read_pages(com, cmd_code: bytes, page_nums):
         cmd = get_command(cmd_code, page_num)
         data = read_page(com, cmd, page_num)
 
-        prompt = wait_k(com)
-        assert prompt == b'K', 'Error [%s] reading page %2X:%3X' % (prompt, page_num, page_num * PAGESIZE // 2)
+        ready = sync(com)
+        assert ready, 'Sync error reading page %2X:%3X' % (page_num, page_num * PAGESIZE // 2)
 
         show_progress(cmd_code)
 
@@ -257,8 +261,8 @@ def read_program(com, page_nums) -> intelhex.Hexfile:
                 if page[offset] == 0x3FFF:
                     page[offset] = None
 
-        if any(page):
-            pages[page_num] = page
+            if any(page):
+                pages[page_num] = page
 
     return pages
 
@@ -285,41 +289,5 @@ def read_data(com, page_nums) -> intelhex.Hexfile:
     return pages
 
 
-def write_data_page(com, page_num: int, page1, page2):
-    """ This is the v1.0 routine that writes data pages in the legacy format with 64
-    byte pages with no high bytes.  Newer bootloaders (1.1+) write pages with high
-    bytes (which are ignored) to make the format identical to program pages """
-
-    # combine pages and account for empty pages
-    page = (page1 or " " * (PAGESIZE * 2)) + (page2 or " " * (PAGESIZE * 2))
-
-    length = len(page)
-    if length != PAGESIZE * 4:
-        print('\nInvalid page size (%d) for page %d' % (length, page_num))
-        return
-
-    address = get_address(page_num)
-    data = intelhex.hex_to_bytes(page, 4)  # todo: 
-    checksum = bytes([calc_checksum(address + data)])
-
-    sys.stderr.write('.')
-    sys.stderr.flush()
-
-    cmd = b"D" + address + data + checksum
-    com.write(com, cmd)
-
-
-def write_data(com, min_data: int, max_data: int, data):
-    """write data V1.0 protocol"""
-    for i in range(min_data, max_data, 2):
-        page_num = i - min_data
-        write_data_page(com, page_num, data[i], data[i + 1])
-
-        prompt = wait_k(com)
-
-        if prompt != b'K':
-            print("Error [%s] writing data page %2X\n" % (prompt, page_num * PAGESIZE // 2))
-            return
-            
 if __name__ == "__main__":
     sys.argv = ['x.hex']
