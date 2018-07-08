@@ -196,6 +196,16 @@ def run_range_test(com):
             print('avail:', avail, 'data:', data)
 
 
+def reset(com: comm.Comm):
+    """ reset the target """
+
+    time.sleep(0.050)
+    com.pulse_dtr(0.250)
+    time.sleep(0.050)
+
+    return
+
+
 def read_firmware(com, conf_page_num, prog_list, data_list):
     """read firmware from target and tweak so that it can be written in standard
     Microchip format.  Certain words such as chip id and calibration for example
@@ -251,9 +261,7 @@ def program(com: comm.Comm, args):
     # pulse dtr to reset the device then flush the buffers to get rid
     # of noise from glitchy startup
     print('Reset ...')
-    time.sleep(0.050)
-    com.pulse_dtr(0.250)
-    time.sleep(0.050)
+    reset(com)
     com.flush()
     
     # boot loader is now waiting on a break signal to activate
@@ -285,20 +293,32 @@ def program(com: comm.Comm, args):
     else:
         boot_pagesize = bload.PAGESIZE
 
-    if boot_version > 0x11:
-        # Get config info
-        config = bload.read_config(com)
+    # Get config info
+    config = bload.read_config(com)
 
-        user_id = ""
-        for word in config[0: 4 * 2: 2]:
-            user_id += '{:X}'.format(word & 0x0F)
+    user_id = ""
+    for word in config[0: 4 * 2: 2]:
+        user_id += '{:X}'.format(word & 0x0F)
 
-        device_id = int.from_bytes(config[6 * 2: 7 * 2], 'little') >> 5
-        device_rev = int.from_bytes(config[6 * 2: 7 * 2], 'little') & 0x1F
-        config_words = int.from_bytes(config[7 * 2: 9 * 2], 'little')
+    chip_id = int.from_bytes(config[6 * 2: 7 * 2], 'little')
+    chip_rev = int.from_bytes(config[6 * 2: 7 * 2], 'little')
+    config_words = [int.from_bytes(config[7 * 2: 8 * 2], 'little'),
+                    int.from_bytes(config[8 * 2: 9 * 2], 'little')]
+
+    # enhanced and midrange have different id/rev bits
+    for mask, shift in ((0x00, 0), (0x00F, 4), (0x01F, 5)):
+        if 0x00 < chip_rev < 0x3FFF:
+            device_rev = chip_rev
+        else:
+            device_rev = chip_id & mask
+
+        device_id = chip_id >> shift
+        if device_id in picdevice.PARAM:
+            break
     else:
-        print("Target does not support Config command\n")
-        return 
+        print(" ID: %04X not in device list" % chip_id)
+        reset(com)
+        sys.exit()
 
     device_param = picdevice.PARAM[device_id]
     device_name = device_param['name']
@@ -310,8 +330,8 @@ def program(com: comm.Comm, args):
           "EEPROM Data Region: 0x%03X - 0x%03X\n" %
           (boot_version, boot_pagesize, boot_start, boot_end, 0, code_end, data_start, data_end))
 
-    print("CONFIG User ID: %s  Device ID: %04X %s Rev: %1X  Config Words: %x" %
-          (user_id, device_id, device_name, device_rev, config_words))
+    print("CONFIG User ID: %s  Device ID: %04X %s Rev: %1X  Config Words: %x %x" %
+          (user_id, device_id, device_name, device_rev, config_words[0], config_words[1]))
 
     # Set ranges and addresses based on the bootloader config and device information
     min_user = 1
