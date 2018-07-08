@@ -27,5 +27,5 @@ class TestBload:
     def test_4(self):
         assert bload.get_command(b'X', 12, b'1234') == b'X\x80\x011234K'
         
-    def test(self, com):
-        assert bload.wait_k(com) == b'K'
+    def test_5(self, com):
+        assert bload.sync(com) == True

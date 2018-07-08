@@ -132,6 +132,7 @@ PARAM = {
     }
 }
 
+
 def find_by_name(name: str):
     device, = [x for x in PARAM.values() if x['name'] == name]
     
