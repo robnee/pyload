@@ -12,6 +12,7 @@ goes deeper and deeper.
 """
 
 import time
+import random
 import intelhex
 import picdevice
 
@@ -694,6 +695,7 @@ class BLoadHost(Port):
     def __init__(self, device: str, firmware):
         Port.__init__(self)
         
+        self.error_prob = 0.0   
         self.proc = BLoadProc(self, device, firmware)
 
     def reset(self):
@@ -703,7 +705,16 @@ class BLoadHost(Port):
     def send_break(self, duration: int):
         super().send_break(duration)
         self.proc.send_break()
-    
+
+    def read(self, num_bytes: int):
+        data = super().read(num_bytes)
+        if random.random() < self.error_prob:
+            index = random.randrange(len(data))
+            data = data[:index] + b'x' + data[index + 1:]
+            print('data error:', num_bytes, len(data))
+            
+        return data
+        
     def write(self, data: bytes):
         """intercept incoming data and call Proc to process it"""
         super().write(data)
@@ -712,4 +723,4 @@ class BLoadHost(Port):
        
 if __name__ == "__main__":
     import pyload
-    pyload.run(['x.hex'])
+    pyload.run(['--port', 'mock', 'x.hex'])
