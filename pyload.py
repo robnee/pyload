@@ -136,6 +136,7 @@ import os
 import sys
 import time
 import argparse
+import logging
 
 import comm
 import term
@@ -546,4 +547,5 @@ def run(argv=None):
             
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     run()

@@ -6,6 +6,7 @@ $Id: bload.py 899 2018-04-28 20:26:42Z rnee $
 
 import sys
 import struct
+import logging
 
 import intelhex
 
@@ -96,7 +97,7 @@ def get_info(com):
 
         # Check for an error
         if data == b'CK':
-            print('\nChecksum error issuing bootloader info command')
+            logging.warning('Checksum error issuing bootloader info command')
             sync(com)
             continue
 
@@ -111,7 +112,7 @@ def get_info(com):
 
         ready = sync(com)
         if not ready:
-            print('Sync error reading bootloader info')
+            logging.warning('Sync error reading bootloader info')
             sync(com)
             continue
 
@@ -132,8 +133,7 @@ def write_page(com, cmd_code: bytes, page_num: int, page_bytes):
 
     length = len(page_bytes)
     if length != PAGESIZE:
-        print('\nInvalid data page size (%d) for page %s %03x' % (length, cmd_code, page_num))
-        return
+        raise f'Invalid data page size ({length}) for page {cmd_code} {page_num:03x}'
 
     cmd = get_command(cmd_code, page_num, page_bytes)
     com.write(cmd)
@@ -172,12 +172,17 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
 
         data_count, data = com.read(PAGESIZE)
 
-        # Check for an error
-        if data == b'CK':
-            print('\nChecksum error issuing read attempt %d on page %d' % (retry, page_num))
-            continue
-
         if data_count != PAGESIZE:
+            # Check for specific errors
+            if data.startswith(b'CK'):
+                logging.warning(f'Checksum error issuing read attempt {retry} on page {page_num}')
+                sync(com)
+                continue
+            if data.startswith(b'EK'):
+                logging.warning(f'Command error issuing read attempt {retry} on page {page_num}')
+                sync(com)
+                continue
+
             print('Short page %d [%d]' % (page_num, data_count))
             print(f'[{data}]')
             continue
@@ -185,8 +190,8 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
         # Check checksum
         count, checksum = com.read(1)
         if ord(checksum) != calc_checksum(data):
-            print('checksum:', ord(checksum), 'computed:', calc_checksum(data))
-            print('Checksum error reading page: 0x%03x cmd: %s\n' % (page_num, cmd))
+            logging.warning(f'checksum: {ord(checksum)} computed: {calc_checksum(data)}')
+            logging.warning(f'Checksum error reading page: 0x{page_num:03x} cmd: {cmd}')
             sync(com)
             continue
 

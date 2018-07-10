@@ -28,4 +28,4 @@ class TestBload:
         assert bload.get_command(b'X', 12, b'1234') == b'X\x80\x011234K'
         
     def test_5(self, com):
-        assert bload.sync(com) == True
+        assert bload.sync(com) is True

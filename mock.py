@@ -13,6 +13,7 @@ goes deeper and deeper.
 
 import time
 import random
+import logging
 import intelhex
 import picdevice
 
@@ -36,6 +37,18 @@ class Port:
         self._dtr = False
         self.inq = bytes()
         self.outq = bytes()
+        self.error_prob = {'write': 0.03, 'read':0.01}
+
+    def _add_noise(self, data: bytes, op: str) -> bytes:
+        """simulate transmission errors"""
+        if data and random.random() < self.error_prob[op]:
+            num_bytes = len(data)
+            index = random.randrange(num_bytes)
+            noise = bytes([random.randrange(256)])
+            data = data[:index] + noise + data[index + 1:]
+            logging.info(f'data error {op} {num_bytes}')
+
+        return data
 
     def clear(self):
         self.inq = bytes()
@@ -80,20 +93,22 @@ class Port:
         """return state of CTS input line"""
         return False
 
+    def write(self, data: bytes):
+        self.outq += self._add_noise(data, 'write')
+
     def read(self, num_bytes: int):
         """read data from inq"""
         if len(self.inq) < num_bytes:
-            # print(f'read: {num_bytes} in: {self.inq} out: {self.outq}')
-            raise EOFError(f'{self.inq} < {num_bytes} out: {self.outq}')
+            logging.info(f'{self.inq} < {num_bytes} out: {self.outq}')
             
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
-        # print(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}')
-        return ret
+        logging.debug(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}')
+
+        return self._add_noise(ret, 'read')
 
     def readline(self):
         if len(self.inq) < 1:
-            print(f'readline: in: {self.inq} out: {self.outq}')
-            raise EOFError
+            logging.info(f'readline: in: {self.inq} out: {self.outq}')
 
         nl = self.inq.find(b'\n')
         if nl < 0:
@@ -101,13 +116,10 @@ class Port:
         else:
             ret, self.inq = self.inq[: nl + 1], self.inq[nl + 1:]
 
-        return ret
+        return self._add_noise(ret, 'read')
         
     def send_break(self, duration: int):
         self.clear()
-
-    def write(self, data: bytes):
-        self.outq += data
 
     def open(self):
         self.clear()
@@ -144,7 +156,7 @@ class Proc:
     def reset(self):
         """reset ICSP host"""
         self.ser_out(b'K')
-        print('Proc reset:', self.port.inq, 'out:', self.port.outq)
+        logging.info(f'Proc reset: {self.port.inq} out: {self.port.outq}')
 
     def ser_avail(self) -> bytes:
         return self.port.ser_avail()
@@ -314,7 +326,7 @@ class ICSPProc(Proc):
 
             # command
             c = self.ser_get()
-            # print(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
+            logging.debug(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
     
             # dispatch
             if c == b'K':  # sync
@@ -539,7 +551,6 @@ class BLoadProc(Proc):
     def boot_check(self):
         c = self.ser_get()
         if self.boot_crc % 0x100 != c[0]:
-            self.ser_out(b'C')
             raise ChecksumError(c[0], self.boot_crc)
     
     def boot_address(self):
@@ -650,43 +661,47 @@ class BLoadProc(Proc):
             self.boot_crc = 0
 
             # dispatch
-            if c == b'C':  # read config words
-                self.boot_check()
-                self.boot_config()
-            elif c == b'I':  # info
-                self.boot_check()
-                self.boot_info()
-            elif c == b'R':  # read program page
-                self.boot_address()
-                self.boot_check()
-                self.boot_read(b'\xff\x3f')
-            elif c == b'F':  # read data page
-                self.boot_address()
-                self.boot_check()
-                self.boot_read(b'\xff\x00')
-            elif c == b'W':  # write program page
-                self.boot_address()
-                self.boot_load_data()
-                self.boot_check()
-                self.boot_range()
-                self.flash_erase()
-                self.flash_write()
-            elif c == b'D':  # write data page
-                self.boot_address()
-                self.boot_load_data()
-                self.boot_check()
-                self.flash_write()
-            elif c == b'E':  # erase program page
-                self.boot_address()
-                self.boot_check()
-                self.flash_erase()
-            elif c == b'T':  # test address
-                self.boot_info()
-            elif c == b'Z':  # reset
-                self.reset()
-                return
-            else:
-                self.ser_out(b'E')
+            try:
+                if c == b'C':  # read config words
+                    self.boot_check()
+                    self.boot_config()
+                elif c == b'I':  # info
+                    self.boot_check()
+                    self.boot_info()
+                elif c == b'R':  # read program page
+                    self.boot_address()
+                    self.boot_check()
+                    self.boot_read(b'\xff\x3f')
+                elif c == b'F':  # read data page
+                    self.boot_address()
+                    self.boot_check()
+                    self.boot_read(b'\xff\x00')
+                elif c == b'W':  # write program page
+                    self.boot_address()
+                    self.boot_load_data()
+                    self.boot_check()
+                    self.boot_range()
+                    self.flash_erase()
+                    self.flash_write()
+                elif c == b'D':  # write data page
+                    self.boot_address()
+                    self.boot_load_data()
+                    self.boot_check()
+                    self.flash_write()
+                elif c == b'E':  # erase program page
+                    self.boot_address()
+                    self.boot_check()
+                    self.flash_erase()
+                elif c == b'T':  # test address
+                    self.boot_info()
+                elif c == b'Z':  # reset
+                    self.reset()
+                    return
+                else:
+                    self.ser_out(b'E')
+            except ChecksumError:
+                self.ser_out(b'CK')
+                continue
 
             self.ser_out(b'K')
         
@@ -695,7 +710,6 @@ class BLoadHost(Port):
     def __init__(self, device: str, firmware):
         Port.__init__(self)
         
-        self.error_prob = 0.01
         self.proc = BLoadProc(self, device, firmware)
 
     def reset(self):
@@ -706,19 +720,11 @@ class BLoadHost(Port):
         super().send_break(duration)
         self.proc.send_break()
 
-    def read(self, num_bytes: int):
-        data = super().read(num_bytes)
-        if random.random() < self.error_prob:
-            index = random.randrange(len(data))
-            noise = bytes([random.randrange(256)])
-            data = data[:index] + noise + data[index + 1:]
-            print('data error reading', num_bytes)
-            
-        return data
-        
     def write(self, data: bytes):
         """intercept incoming data and call Proc to process it"""
         super().write(data)
+
+        # Process the data
         self.proc.run()
 
        
