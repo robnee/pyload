@@ -4,3 +4,4 @@ __pycache__
 /.*.icloud
 /log
 /previous.hex
+/.pytest_cache

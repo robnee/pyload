@@ -84,40 +84,45 @@ def get_info(com):
 
     # allow 5 read tries
     for retry in range(5):
-        cmd = b'I' + b'\0'
+        try:
+            cmd = b'I' + b'\0'
+    
+            com.write(cmd)
+    
+            count, data = com.read(16)
+    
+            # if bootloader responds with less than four bytes assume that it
+            # doesn't  support the I command.  
+            if count < 4:
+                break
 
-        com.write(cmd)
-
-        count, data = com.read(16)
-
-        # if bootloader responds with less than four bytes assume that it doesn't
-        # support the I command.  Version 0x10, Boot region 0x38 - 0x3F, EEPROM data 0x108
-        if count < 4:
-            break
-
-        # Check for an error
-        if data == b'CK':
-            logging.warning('Checksum error issuing bootloader info command')
+            # Check for an error
+            if data == b'CK':
+                logging.warning('Checksum error issuing bootloader info command')
+                raise RuntimeError
+    
+            count, checksum = com.read(1)
+            if not checksum:
+                logging.warning('no checksum returned')
+                raise RuntimeError
+    
+            # Check checksum
+            act_checksum = calc_checksum(data)
+            if ord(checksum) != act_checksum:
+                logging.warning('Checksum error getting bootloader info.',
+                                f'chip:0x{ord(checksum):02x} calc:0x{acr_checksum:02x}')
+                raise RuntimeError
+    
+            ready = sync(com)
+            if not ready:
+                logging.warning('Sync error reading bootloader info')
+                raise RuntimeError
+    
+            # return boot_version, boot_start, boot_size, data_start, data_end, code_end
+            return struct.unpack('BBHHHHHxxxx', data)
+            
+        except RuntimeError:
             sync(com)
-            continue
-
-        count, checksum = com.read(1)
-
-        # Check checksum
-        if ord(checksum) != calc_checksum(data):
-            print('\nChecksum error getting bootloader info.  chip:0x%02x calc:0x%02x' %
-                  (ord(checksum), calc_checksum(data)))
-            sync(com)
-            continue
-
-        ready = sync(com)
-        if not ready:
-            logging.warning('Sync error reading bootloader info')
-            sync(com)
-            continue
-
-        # return boot_version, boot_start, boot_size, data_start, data_end, code_end
-        return struct.unpack('BBHHHHHxxxx', data)
 
     return (0,) * 7
 
@@ -133,7 +138,7 @@ def write_page(com, cmd_code: bytes, page_num: int, page_bytes):
 
     length = len(page_bytes)
     if length != PAGESIZE:
-        raise f'Invalid data page size ({length}) for page {cmd_code} {page_num:03x}'
+        raise ValueError(f'Invalid page size ({length}) writing page {page_num:03x}')
 
     cmd = get_command(cmd_code, page_num, page_bytes)
     com.write(cmd)
@@ -160,7 +165,7 @@ def write_pages(com, cmd: bytes, pages: intelhex.Hexfile, page_nums):
 
         ready = sync(com)
         if not ready:
-            print('Sync error writing page 0x%03X:0x%04X' % (page_num, page_num * PAGESIZE // 2))
+            logging.error('Sync error writing page 0x%03X:0x%04X' % (page_num, page_num * PAGESIZE // 2))
             return
 
 
@@ -168,34 +173,38 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
     """read specified page"""
     # allow 5 read tries
     for retry in range(5):
-        com.write(cmd)
-
-        data_count, data = com.read(PAGESIZE)
-
-        if data_count != PAGESIZE:
-            # Check for specific errors
-            if data.startswith(b'CK'):
-                logging.warning(f'Checksum error issuing read attempt {retry} on page {page_num}')
-                sync(com)
-                continue
-            if data.startswith(b'EK'):
-                logging.warning(f'Command error issuing read attempt {retry} on page {page_num}')
-                sync(com)
-                continue
-
-            print('Short page %d [%d]' % (page_num, data_count))
-            print(f'[{data}]')
-            continue
-
-        # Check checksum
-        count, checksum = com.read(1)
-        if ord(checksum) != calc_checksum(data):
-            logging.warning(f'checksum: {ord(checksum)} computed: {calc_checksum(data)}')
-            logging.warning(f'Checksum error reading page: 0x{page_num:03x} cmd: {cmd}')
+        try:
+            com.write(cmd)
+    
+            data_count, data = com.read(PAGESIZE)
+    
+            if data_count != PAGESIZE:
+                # Check for specific errors
+                if data.startswith(b'CK'):
+                    logging.warning(f'Checksum error on read attempt {retry} on page {page_num}')
+                    raise RuntimeError
+                if data.startswith(b'EK'):
+                    logging.warning(f'Command error on read attempt {retry} on page {page_num}')
+                    raise RuntimeError
+    
+                logging.warning(f'Short page {page_num} [{data_count}]')
+                raise RuntimeError
+    
+            # Check checksum
+            count, checksum = com.read(1)
+            if not checksum:
+                logging.warning('no checksum returned')
+                raise RuntimeError
+    
+            act_checksum = calc_checksum(data)
+            if ord(checksum) != act_checksum:
+                logging.warning(f'Checksum error reading page: 0x{page_num:03x} cmd: {cmd}')
+                logging.warning(f'checksum: {ord(checksum)} computed: {act_checksum}')
+                raise RuntimeError
+    
+            return data
+        except RuntimeError:
             sync(com)
-            continue
-
-        return data
 
     # fails
     return b''
