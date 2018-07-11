@@ -434,10 +434,7 @@ def program(com: comm.Comm, args):
         while True:
             sys.stdout.write("Writing Firmware    ")
             bload.write_pages(com, b'W', file_firmware, prog_write_list)
-            if boot_version > 0x10:
-                bload.write_pages(com, b'D', file_firmware, data_write_list)
-            else:
-                print("Should be writing data...")
+            bload.write_pages(com, b'D', file_firmware, data_write_list)
 
             print()
 

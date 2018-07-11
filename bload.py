@@ -79,6 +79,20 @@ def sync(com) -> bool:
     return False
 
 
+def show_progress(cmd: bytes):
+    """display a progress tick"""
+    if cmd in (b'C', b'R', b'W'):
+        sys.stdout.write('.')
+    elif cmd == b'E':
+        sys.stdout.write('x')
+    elif cmd == b'S':
+        sys.stdout.write('>')
+    elif cmd in (b'D', b'F'):
+        sys.stdout.write(':')
+
+    sys.stdout.flush()
+
+
 def get_info(com):
     """request info record from bootloader"""
 
@@ -92,7 +106,7 @@ def get_info(com):
             count, data = com.read(16)
     
             # if bootloader responds with less than four bytes assume that it
-            # doesn't  support the I command.  
+            # doesn't  support the I command.
             if count < 4:
                 break
 
@@ -170,8 +184,7 @@ def write_pages(com, cmd: bytes, pages: intelhex.Hexfile, page_nums):
 
 
 def read_page(com, cmd: bytes, page_num: int) -> bytes:
-    """read specified page"""
-    # allow 5 read tries
+    """read specified page. allow 5 read tries"""
     for retry in range(5):
         try:
             com.write(cmd)
@@ -218,26 +231,12 @@ def read_config(com) -> bytes:
     data = read_page(com, b'C' + b'\0', page_num)
 
     ready = sync(com)
-    assert ready, 'Error reading config'
+    assert ready, 'Sync error reading config'
 
     show_progress(b'C')
 
     # Only send back first 9 words, 18 bytes.  Rest are zeros.
     return data
-
-
-def show_progress(cmd: bytes):
-    """display a progress tick"""
-    if cmd in (b'C', b'R', b'W'):
-        sys.stdout.write('.')
-    elif cmd == b'E':
-        sys.stdout.write('x')
-    elif cmd == b'S':
-        sys.stdout.write('>')
-    elif cmd in (b'D', b'F'):
-        sys.stdout.write(':')
-
-    sys.stdout.flush()
 
 
 def read_pages(com, cmd_code: bytes, page_nums):
