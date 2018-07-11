@@ -37,7 +37,7 @@ class Port:
         self._dtr = False
         self.inq = bytes()
         self.outq = bytes()
-        self.error_prob = {'write': 0.03, 'read':0.01}
+        self.error_prob = {'write': 0.03, 'read': 0.01}
 
     def _add_noise(self, data: bytes, op: str) -> bytes:
         """simulate transmission errors"""

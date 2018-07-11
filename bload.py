@@ -124,7 +124,7 @@ def get_info(com):
             act_checksum = calc_checksum(data)
             if ord(checksum) != act_checksum:
                 logging.warning('Checksum error getting bootloader info.',
-                                f'chip:0x{ord(checksum):02x} calc:0x{acr_checksum:02x}')
+                                f'chip:0x{ord(checksum):02x} calc:0x{act_checksum:02x}')
                 raise RuntimeError
     
             ready = sync(com)
