@@ -147,7 +147,7 @@ def erase_program_page(com, page_num: int):
     com.write(cmd)
 
 
-def write_page(com, cmd_code: bytes, page_num: int, page_bytes):
+def write_page(com, cmd_code: bytes, page_num: int, page_bytes: bytes):
     """ Write a single program page to the chip """
 
     length = len(page_bytes)
