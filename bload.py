@@ -231,7 +231,8 @@ def read_config(com) -> bytes:
     data = read_page(com, b'C' + b'\0', page_num)
 
     ready = sync(com)
-    assert ready, 'Sync error reading config'
+    if not ready:
+        raise RuntimeError('Sync error reading config')
 
     show_progress(b'C')
 
@@ -249,7 +250,8 @@ def read_pages(com, cmd_code: bytes, page_nums):
         data = read_page(com, cmd, page_num)
 
         ready = sync(com)
-        assert ready, 'Sync error reading page %2X:%3X' % (page_num, page_num * PAGESIZE // 2)
+        if not ready:
+            raise RuntimeError(f'Sync error reading page 0x{page_num:%3X}')
 
         show_progress(cmd_code)
 
