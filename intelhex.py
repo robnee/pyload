@@ -209,16 +209,11 @@ class Hexfile:
             calcsum = count + hex_to_sum(address) + hex_to_sum(rectype) + hex_to_sum(words)
             calcsum = '{:02X}'.format((~calcsum + 1) & 0xff)
 
-            assert calcsum == checksum, "line: {} address: ({} {}) has bad checksum ({})  I get {}".format(
-                                    line_num, base, address, checksum, calcsum)
+            if calcsum != checksum:
+                raise RuntimeError(f"line: {line_num} address: ({base} {address}) has bad checksum ({checksum})  I get {calcsum}")
 
             full_address = base + int(address, 16)
-            page_num = int(full_address + 1) // PAGEBYTES
-            offset = full_address % PAGEBYTES
-
-            # vet possibility to migrate the above to something simpler
-            test_num, test_offset = divmod(full_address, PAGEBYTES)
-            assert test_num == page_num and test_offset == offset, "divmod doesn't work"
+            page_num, offset = divmod(full_address, PAGEBYTES)
 
             word_offset, word_count = offset // 2, count // 2
 
@@ -227,7 +222,6 @@ class Hexfile:
                 if len(self.page_list) <= page_num:
                     self[page_num] = Page()
                 self[page_num][word_offset: word_offset + word_count] = words
-            # printf ("$type %2d $address(%04X %2d) $data $checksum $sum\n", $count, $page, $offset);
 
     def write(self, fp):
         """Write pages in .HEX format"""
@@ -293,7 +287,6 @@ class Hexfile:
                         calcsum = (~calcsum + 1) & 0xFF
 
                         print(':%02X%04X%02X%s%02X' % (byte_count, addr, 0x00, data, calcsum), file=fp)
-                        # fp.write(':%02X%04X%02X%s%02X\r\n' % (byte_count, addr, 0x00, data, calcsum))
 
                         addr += byte_count
 
