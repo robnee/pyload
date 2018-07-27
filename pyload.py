@@ -207,6 +207,28 @@ def reset(com: comm.Comm):
     return
 
 
+def connect(com):
+    # pulse dtr to reset the device then flush the buffers to get rid
+    # of noise from glitchy startup
+    print('Reset ...')
+    reset(com)
+    com.flush()
+    
+    # boot loader is now waiting on a break signal to activate
+    com.pulse_break(0.200)
+
+    # Look for prompt but skip null character noise
+    while True:
+        (count, value) = com.read(1)
+        if count == 0 or value != b'\x00':
+            break
+
+    if count == 0 or value != b'K':
+        return False
+        
+    return True
+
+
 def read_firmware(com, conf_page_num, prog_list, data_list):
     """read firmware from target and tweak so that it can be written in standard
     Microchip format.  Certain words such as chip id and calibration for example
@@ -259,25 +281,10 @@ def program(com: comm.Comm, args):
 
         return
 
-    # pulse dtr to reset the device then flush the buffers to get rid
-    # of noise from glitchy startup
-    print('Reset ...')
-    reset(com)
-    com.flush()
-    
-    # boot loader is now waiting on a break signal to activate
-    com.pulse_break(0.200)
-
-    # Look for prompt but skip null character noise
-    while True:
-        (count, value) = com.read(1)
-        if count == 0 or value != b'\x00':
-            break
-
-    if count == 0 or value != b'K':
-        print('[{}, {}] Could not find boot loader on {}\n'.format(count, value, com.port))
+    if not connect(com):
+        print('[{count}, {value}] Could not find boot loader on {com.port}\n')
         return
-
+        
     print('Connected...')
 
     # Get info about the bootloader
@@ -478,7 +485,7 @@ def program(com: comm.Comm, args):
         print("Update successful.")
 
     print("Reseting target...")
-    com.pulse_dtr(0.250)
+    reset(com)
                    
     print(f"elapsed time: {time.time() - start_time:0.2f} seconds")
 
