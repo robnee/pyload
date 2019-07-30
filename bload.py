@@ -6,8 +6,9 @@ $Id: bload.py 899 2018-04-28 20:26:42Z rnee $
 
 import sys
 import struct
+import logging
 
-import hexfile
+import intelhex
 
 PAGESIZE = 64
 
@@ -56,60 +57,88 @@ def get_command(cmd_code, page_num: int, data: bytes=None) -> bytes:
     return bytes(cmd_code) + address + data + checksum
 
 
-def wait_k(com) -> bytes:
-    """ Wait for K (OK) prompt """
+def sync(com) -> bool:
+    """ synchronize with the target and prepare it for the next command """
 
-    data = bytes()
-    timeout = 3
+    retries = 3
 
     while True:
         count, prompt = com.read(1)
-
-        data += prompt
         if prompt == b'K':
-            break
+            return True
 
-        # Check timeout
-        timeout -= 1
-        if count == 0 and timeout == 0:
-            break
+        if count == 0:
+            if retries <= 0:
+                break
 
-    return data
+            retries -= 1
+
+        if com.avail() == 0:
+            com.write(b'K')
+
+    return False
+
+
+def show_progress(cmd: bytes):
+    """display a progress tick"""
+    if cmd in (b'C', b'R', b'W'):
+        sys.stdout.write('.')
+    elif cmd == b'E':
+        sys.stdout.write('x')
+    elif cmd == b'S':
+        sys.stdout.write('>')
+    elif cmd in (b'D', b'F'):
+        sys.stdout.write(':')
+
+    sys.stdout.flush()
 
 
 def get_info(com):
     """request info record from bootloader"""
-    cmd = b'I' + b'\0'
 
-    com.write(cmd)
+    # allow 5 read tries
+    for retry in range(5):
+        try:
+            cmd = b'I' + b'\0'
+    
+            com.write(cmd)
+    
+            count, data = com.read(16)
+    
+            # if bootloader responds with less than four bytes assume that it
+            # doesn't  support the I command.
+            if count < 4:
+                break
 
-    count, data = com.read(16)
+            # Check for an error
+            if data == b'CK':
+                logging.warning('Checksum error issuing bootloader info command')
+                raise RuntimeError
+    
+            count, checksum = com.read(1)
+            if not checksum:
+                logging.warning('no checksum returned')
+                raise RuntimeError
+    
+            # Check checksum
+            act_checksum = calc_checksum(data)
+            if ord(checksum) != act_checksum:
+                logging.warning('Checksum error getting bootloader info.',
+                                f'chip:0x{ord(checksum):02x} calc:0x{act_checksum:02x}')
+                raise RuntimeError
+    
+            ready = sync(com)
+            if not ready:
+                logging.warning('Sync error reading bootloader info')
+                raise RuntimeError
+    
+            # return boot_version, boot_start, boot_size, data_start, data_end, code_end
+            return struct.unpack('BBHHHHHxxxx', data)
+            
+        except RuntimeError:
+            sync(com)
 
-    # if bootloader responds with less than four bytes assume that it doesn't
-    # support the I command.  Version 0x10, Boot region 0x38 - 0x3F, EEPROM data 0x108
-    if count < 4:
-        return bytes(16)
-
-    # Check for an error
-    if data == b'CK':
-        print('\nChecksum error issuing bootloader info command')
-        return bytes(16)
-
-    count, checksum = com.read(1)
-
-    # Check checksum
-    if ord(checksum) != calc_checksum(data):
-        print('\nChecksum error getting bootloader info.  chip:0x%02x calc:0x%02x' %
-              (ord(checksum), calc_checksum(data)))
-        return bytes(16)
-
-    prompt = wait_k(com)
-    if prompt != b'K':
-        print('Error [%s] bootloader info' % prompt)
-        return bytes(16)
-
-    # return boot_version, boot_start, boot_size, data_start, data_end, code_end
-    return struct.unpack('BBHHHHHxxxx', data)
+    return (0,) * 7
 
 
 def erase_program_page(com, page_num: int):
@@ -118,19 +147,18 @@ def erase_program_page(com, page_num: int):
     com.write(cmd)
 
 
-def write_page(com, cmd_code: bytes, page_num: int, page_bytes):
+def write_page(com, cmd_code: bytes, page_num: int, page_bytes: bytes):
     """ Write a single program page to the chip """
 
     length = len(page_bytes)
     if length != PAGESIZE:
-        print('\nInvalid data page size (%d) for page %s %03x' % (length, cmd_code, page_num))
-        return
+        raise ValueError(f'Invalid page size ({length}) writing page {page_num:03x}')
 
     cmd = get_command(cmd_code, page_num, page_bytes)
     com.write(cmd)
 
 
-def write_pages(com, cmd: bytes, pages: hexfile.Hexfile, page_nums):
+def write_pages(com, cmd: bytes, pages: intelhex.Hexfile, page_nums):
     """write specified list of pages"""
     for page_num in page_nums:
         page = pages[page_num] if page_num < len(pages) else None
@@ -149,43 +177,47 @@ def write_pages(com, cmd: bytes, pages: hexfile.Hexfile, page_nums):
             write_page(com, cmd, page_num, bytes(page))
             show_progress(cmd)
 
-        prompt = wait_k(com)
-        if prompt != b'K':
-            for c in prompt:
-                print('[%02X] ' % c, end='')
-
-            print('Error [%s] writing page 0x%03X:0x%04X' % (prompt, page_num,
-                  page_num * PAGESIZE // 2))
+        ready = sync(com)
+        if not ready:
+            logging.error('Sync error writing page 0x%03X:0x%04X' % (page_num, page_num * PAGESIZE // 2))
             return
 
 
 def read_page(com, cmd: bytes, page_num: int) -> bytes:
-    """read specified page"""
-    # allow 5 read tries
+    """read specified page. allow 5 read tries"""
     for retry in range(5):
-        com.write(cmd)
-
-        count, data = com.read(PAGESIZE)
-
-        # Check for an error
-        if data == b'CK':
-            print('\nChecksum error issuing read attempt %d on page %d' % (retry,
-                  page_num))
-            continue
-
-        if count != PAGESIZE:
-            print('Short page %d [%d]' % (page_num, count))
-            print('[', hexfile.bytes_to_hex(data), ']')
-            continue
-
-        # Check checksum
-        count, checksum = com.read(1)
-        if ord(checksum) != calc_checksum(data):
-            print('checksum:', ord(checksum), 'computed:', calc_checksum(data))
-            print('\nChecksum error reading %s page 0x%03x\n' % (cmd, page_num))
-            continue
-
-        return data
+        try:
+            com.write(cmd)
+    
+            data_count, data = com.read(PAGESIZE)
+    
+            if data_count != PAGESIZE:
+                # Check for specific errors
+                if data.startswith(b'CK'):
+                    logging.warning(f'Checksum error on read attempt {retry} on page {page_num}')
+                    raise RuntimeError
+                if data.startswith(b'EK'):
+                    logging.warning(f'Command error on read attempt {retry} on page {page_num}')
+                    raise RuntimeError
+    
+                logging.warning(f'Short page {page_num} [{data_count}]')
+                raise RuntimeError
+    
+            # Check checksum
+            count, checksum = com.read(1)
+            if not checksum:
+                logging.warning('no checksum returned')
+                raise RuntimeError
+    
+            act_checksum = calc_checksum(data)
+            if ord(checksum) != act_checksum:
+                logging.warning(f'Checksum error reading page: 0x{page_num:03x} cmd: {cmd}')
+                logging.warning(f'checksum: {ord(checksum)} computed: {act_checksum}')
+                raise RuntimeError
+    
+            return data
+        except RuntimeError:
+            sync(com)
 
     # fails
     return b''
@@ -198,27 +230,14 @@ def read_config(com) -> bytes:
     # Read all pages and create a list
     data = read_page(com, b'C' + b'\0', page_num)
 
-    prompt = wait_k(com)
-    assert prompt == b'K', 'Error [%s] reading config' % prompt
+    ready = sync(com)
+    if not ready:
+        raise RuntimeError('Sync error reading config')
 
     show_progress(b'C')
 
     # Only send back first 9 words, 18 bytes.  Rest are zeros.
     return data
-
-
-def show_progress(cmd: bytes):
-    """display a progress tick"""
-    if cmd in (b'C', b'R', b'W'):
-        sys.stdout.write('.')
-    elif cmd == b'E':
-        sys.stdout.write('x')
-    elif cmd == b'S':
-        sys.stdout.write('>')
-    elif cmd in (b'D', b'F'):
-        sys.stdout.write(':')
-
-    sys.stdout.flush()
 
 
 def read_pages(com, cmd_code: bytes, page_nums):
@@ -230,8 +249,9 @@ def read_pages(com, cmd_code: bytes, page_nums):
         cmd = get_command(cmd_code, page_num)
         data = read_page(com, cmd, page_num)
 
-        prompt = wait_k(com)
-        assert prompt == b'K', 'Error [%s] reading page %2X:%3X' % (prompt, page_num, page_num * PAGESIZE // 2)
+        ready = sync(com)
+        if not ready:
+            raise RuntimeError(f'Sync error reading page 0x{page_num:%3X}')
 
         show_progress(cmd_code)
 
@@ -240,23 +260,21 @@ def read_pages(com, cmd_code: bytes, page_nums):
     return page_list
 
 
-def read_program(com, page_nums) -> hexfile.Hexfile:
+def read_program(com, page_nums) -> intelhex.Hexfile:
     """Read all pages and create a list"""
 
     prog_list = read_pages(com, b'R', page_nums)
 
-    pages = hexfile.Hexfile()
+    pages = intelhex.Hexfile()
 
     for page_num, data in zip(page_nums, prog_list):
         if data:
-            page = hexfile.Page(data)
+            page = intelhex.Page(data)
 
             # Remove NULL words
-            for offset in range(0, len(page), 2):
-                word = page[offset: offset + 2]
-                if word == ['FF', '3F']:
+            for offset in range(0, len(page)):
+                if page[offset] == 0x3FFF:
                     page[offset] = None
-                    page[offset + 1] = None
 
             if any(page):
                 pages[page_num] = page
@@ -264,23 +282,21 @@ def read_program(com, page_nums) -> hexfile.Hexfile:
     return pages
 
 
-def read_data(com, page_nums) -> hexfile.Hexfile:
+def read_data(com, page_nums) -> intelhex.Hexfile:
     """Read all pages and create a list"""
 
     data_list = read_pages(com, b'F', page_nums)
 
-    pages = hexfile.Hexfile()
+    pages = intelhex.Hexfile()
 
     for page_num, data in zip(page_nums, data_list):
         if data:
-            page = hexfile.Page(data)
+            page = intelhex.Page(data)
 
             # Remove NULL words and force unused high word to 00
-            for offset in range(0, len(page), 2):
-                word = [page[offset], '00']
-                if word == ['FF', '00']:
+            for offset in range(0, len(page)):
+                if page[offset] == 0x00FF:
                     page[offset] = None
-                    page[offset + 1] = None
 
             if any(page):
                 pages[page_num] = page
@@ -288,38 +304,5 @@ def read_data(com, page_nums) -> hexfile.Hexfile:
     return pages
 
 
-def write_data_page(com, page_num: int, page1, page2):
-    """ This is the v1.0 routine that writes data pages in the legacy format with 64
-    byte pages with no high bytes.  Newer bootloaders (1.1+) write pages with high
-    bytes (which are ignored) to make the format identical to program pages """
-
-    # combine pages and account for empty pages
-    page = (page1 or " " * (PAGESIZE * 2)) + (page2 or " " * (PAGESIZE * 2))
-
-    length = len(page)
-    if length != PAGESIZE * 4:
-        print('\nInvalid page size (%d) for page %d' % (length, page_num))
-        return
-
-    address = get_address(page_num)
-    data = hexfile.hex_to_bytes(page, 4)
-    checksum = bytes([calc_checksum(address + data)])
-
-    sys.stderr.write('.')
-    sys.stderr.flush()
-
-    cmd = b"D" + address + data + checksum
-    com.write(com, cmd)
-
-
-def write_data(com, min_data: int, max_data: int, data):
-    """write data V1.0 protocol"""
-    for i in range(min_data, max_data, 2):
-        page_num = i - min_data
-        write_data_page(com, page_num, data[i], data[i + 1])
-
-        prompt = wait_k(com)
-
-        if prompt != b'K':
-            print("Error [%s] writing data page %2X\n" % (prompt, page_num * PAGESIZE // 2))
-            return
+if __name__ == "__main__":
+    sys.argv = ['x.hex']

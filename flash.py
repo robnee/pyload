@@ -20,21 +20,21 @@ The Host controller understands the following commands
 
 Sn	- Start programming.  Hold MCLR on target low and send MCHP signiture
 En	- End programming.  Release MCLR on target
-X		- Reset the Address counter to zero
-I		- Increment the Address counter
-Jnn   - Jump the Address counter a given number of locations
+X	- Reset the Address counter to zero
+I	- Increment the Address counter
+Jnn - Jump the Address counter a given number of locations
 Bn	- Bulk erase program memory
 An	- Bulk erase data memory
 Cnn	- Set address to 8000h and Load config word
 Lnn	- Load program word at current address
 Mnn	- Load program word at current address and increment program counter
 Pn	- Program commit
-R		- Read program memory
+R	- Read program memory
 Fnn	- Fetch program memory words
 Gnn	- Get data memory words
 Dn	- Load data byte for programming
-V		- ICSP version
-K		- NOP.  Just returns the K prompt
+V	- ICSP version
+K	- NOP.  Just returns the K prompt
 
 V0.1 04/18/2013
 
@@ -72,7 +72,6 @@ data using chr.  Pattern now matches other icsp_load_xxx functions.
 """
 
 import os
-import sys
 import time
 import argparse
 
@@ -89,7 +88,6 @@ DEFAULT_PORT = '/dev/ttyUSB0'
 
 # Communications settings
 
-MOCK = True
 DATA = 8
 TOUT = 1
 
@@ -254,7 +252,8 @@ def program(com):
         chip_firmware = read_firmware(com, device_param)
         print()
 
-        with open(args.filename, mode='w') as fp:
+        # Hex files always have DOS encoding
+        with open(args.filename, mode='w', newline='\r\n') as fp:
             chip_firmware.write(fp)
 
         if not args.quiet:
@@ -340,12 +339,7 @@ if __name__ == '__main__':
     start_time = time.time()
 
     print('Initializing communications on {} {} ...'.format(args.port, args.baud))
-    if not MOCK:
-        import serial
-
-        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
-
-    else:
+    if args.port.upper() == 'MOCK':
         import mock
 
         # unless we are reading out the chip firmware read a new file to load
@@ -353,11 +347,15 @@ if __name__ == '__main__':
             mock_firmware = intelhex.Hexfile()
             mock_firmware.read(fp)
 
-        ser = mock.ICSPHost(mock_firmware)
+        ser = mock.ICSPHost('12F1822', mock_firmware)
+    else:
+        import serial
+
+        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
 
     # create wrapper
-    ser_com = comm.Comm(ser, logf)
-    program(ser_com)
-    ser.close()
+    with comm.Comm(ser, logf) as ser_com:
+        print(ser_com)
+        program(ser_com)
 
     print(f"elapsed time: {time.time() - start_time:0.2f} seconds")

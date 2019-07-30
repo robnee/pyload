@@ -6,7 +6,7 @@ $Id: picdevice.py 896 2018-04-27 03:00:14Z rnee $
 
 PARAM = {
     0x04E: {
-        'desc':        '16F819',
+        'name':        '16F819',
         'family':      'mid',
         'max_page':    0x3F,
         'conf_page':   0x100,
@@ -131,3 +131,9 @@ PARAM = {
         'num_latches': 32
     }
 }
+
+
+def find_by_name(name: str):
+    device, = [x for x in PARAM.values() if x['name'] == name]
+    
+    return device

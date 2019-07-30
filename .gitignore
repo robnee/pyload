@@ -1,1 +1,7 @@
-.idea/
+.idea
+__pycache__
+/x.hex
+/.*.icloud
+/log
+/previous.hex
+/.pytest_cache

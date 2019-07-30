@@ -44,12 +44,11 @@ class Page:
     >>> p[23] = 0x5f
     >>> p[5:7] = '12345678'
     >>> p[9] = 'FF3F'
-    >>> Page.NULLVAL = b'..'
     >>> format(p)
     '        4F2C        12345678        FF3F                                                    5F00                            9F6C'
     >>> p[6], p[9]
     (30806, 16383)
-    >>> bytes(p)
+    >>> p.tobytes(b'..')
     b'....O,....\x124Vx....\xff?.........................._\x00..............\x9fl'
     >>> p[PAGELEN] = '77'
     Traceback (most recent call last):
@@ -64,21 +63,21 @@ class Page:
     "Page('00308C0001308D002100EA3099001A1C172888018C1425238C1025231A28    00308C0001308D002100EA3099001A1C172888018C1425238C1025231A28    ')"
     >>> q.display(0)
     '000-0000 : |00308C0001308D00 2100EA3099001A1C 172888018C142523 8C1025231A28    |\n000-0010 : |00308C0001308D00 2100EA3099001A1C 172888018C142523 8C1025231A28    |'
-    >>> bytes(q)
+    >>> q.tobytes(b'..')
     b'\x000\x8c\x00\x010\x8d\x00!\x00\xea0\x99\x00\x1a\x1c\x17(\x88\x01\x8c\x14%#\x8c\x10%#\x1a(..\x000\x8c\x00\x010\x8d\x00!\x00\xea0\x99\x00\x1a\x1c\x17(\x88\x01\x8c\x14%#\x8c\x10%#\x1a(..'
     """
-
-    NULLVAL = b'\xff\xff'
 
     def __init__(self, s=None):
         if s is None:
             self.page = [None] * PAGELEN
+        elif type(s) == int:
+            self.page = [None] * s
         elif type(s) == str:
             if len(s) > PAGELEN * 4:
                 raise ValueError(f'string len { len(s) } greater than {PAGELEN * 4} hex digits')
 
             self.page = [None if x == '    ' else int(x[:2], 16) + (int(x[2:], 16) << 8) for x in chunks(s, 4)]
-        elif type(s) == bytes:
+        elif type(s) in (bytes, bytearray):
             if len(s) > PAGELEN * 2:
                     raise ValueError(f'bytes len {len(s)} greater than of {PAGELEN * 2}')
 
@@ -121,8 +120,7 @@ class Page:
         self.page[key] = value
 
     def __bytes__(self):
-        x = [w.to_bytes(2, 'little') if w is not None else self.NULLVAL for w in self.page]
-        return b''.join(x)
+        return self.tobytes(b'\xff\xff')
 
     def __str__(self):
         def fmt(w):
@@ -139,7 +137,12 @@ class Page:
         if len(self.page) < PAGELEN:
             self.page.extend([None] * (PAGELEN - len(self.page)))
 
-    def display(self, page_num):
+    def tobytes(self, null: bytes):
+        """convert to bytes with None words set to the null value"""
+        x = [w.to_bytes(2, 'little') if w is not None else null for w in self.page]
+        return b''.join(x)
+
+    def display(self, page_num: int):
         """format page for display purposes"""
 
         disp = str(self)
@@ -167,10 +170,14 @@ class Hexfile:
         self.page_list[page_num] = Page(page)
 
     def __getitem__(self, key):
+        """suppress IndexError"""
         try:
             return self.page_list[key]
         except IndexError:
             return None
+
+    def __delitem__(self, key):
+        self.page_list[key] = None
 
     def __len__(self):
         return len(self.page_list)
@@ -202,16 +209,11 @@ class Hexfile:
             calcsum = count + hex_to_sum(address) + hex_to_sum(rectype) + hex_to_sum(words)
             calcsum = '{:02X}'.format((~calcsum + 1) & 0xff)
 
-            assert calcsum == checksum, "line: {} address: ({} {}) has bad checksum ({})  I get {}".format(
-                                    line_num, base, address, checksum, calcsum)
+            if calcsum != checksum:
+                raise RuntimeError(f"line: {line_num} address: ({base} {address}) has bad checksum ({checksum})  I get {calcsum}")
 
             full_address = base + int(address, 16)
-            page_num = int(full_address + 1) // PAGEBYTES
-            offset = full_address % PAGEBYTES
-
-            # vet possibility to migrate the above to something simpler
-            test_num, test_offset = divmod(full_address, PAGEBYTES)
-            assert test_num == page_num and test_offset == offset, "divmod doesn't work"
+            page_num, offset = divmod(full_address, PAGEBYTES)
 
             word_offset, word_count = offset // 2, count // 2
 
@@ -220,7 +222,6 @@ class Hexfile:
                 if len(self.page_list) <= page_num:
                     self[page_num] = Page()
                 self[page_num][word_offset: word_offset + word_count] = words
-            # printf ("$type %2d $address(%04X %2d) $data $checksum $sum\n", $count, $page, $offset);
 
     def write(self, fp):
         """Write pages in .HEX format"""
@@ -238,7 +239,7 @@ class Hexfile:
                 calcsum = 2 + 0 + 4 + hex_to_sum(data)
                 calcsum = (~calcsum + 1) & 0xFF
 
-                print(":02000004%s%02X" % (data, calcsum), file=fp, end='\r\n')
+                print(":02000004%s%02X" % (data, calcsum), file=fp)
 
             if page is not None:
                 # break each page into blocks of 8 words
@@ -285,12 +286,11 @@ class Hexfile:
                         calcsum = byte_count + addr // 0x100 + (addr & 0xFF) + hex_to_sum(data)
                         calcsum = (~calcsum + 1) & 0xFF
 
-                        # print(':%02X%04X%02X%s%02X' % (count, addr, 0x00, data, calcsum), file=fp, end='\r\n')
-                        fp.write(':%02X%04X%02X%s%02X\r\n' % (byte_count, addr, 0x00, data, calcsum))
+                        print(':%02X%04X%02X%s%02X' % (byte_count, addr, 0x00, data, calcsum), file=fp)
 
                         addr += byte_count
 
-        print(':00000001FF', file=fp, end='\r\n')
+        print(':00000001FF', file=fp)
 
     def compare(self, other, pages):
         """Check that the data is appropriate to download.  Returns a list of pages that mismatch"""

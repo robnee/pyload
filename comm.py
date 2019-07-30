@@ -7,7 +7,7 @@ import time
 
 
 class Comm:
-    """Serial port wrapper that supports logginga and mocking"""
+    """Serial port wrapper that supports logging and mocking"""
     def __init__(self, ser, logf=None):
         self.ser = ser
         self.logf = logf
@@ -21,6 +21,16 @@ class Comm:
         self._log(b'\x01' if ser.dsr else b'\x00', "DSR")
         self._log(b'\x01' if ser.cts else b'\x00', "CTS")
         self._log(b'\x01' if ser.rts else b'\x00', "RTS")
+
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, *exc):
+        self.close()
+
+    @property
+    def port(self):
+        return self.ser.port
 
     def read(self, request=None):
         """ read a requested number of bytes.  If request is missing or zero read available """
