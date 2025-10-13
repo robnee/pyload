@@ -55,7 +55,7 @@ class Port:
         self.outq = bytes()
 
     def reset(self):
-        """reset the port.  typically overriddend by Host"""
+        """reset the port.  typically overridden by Host"""
         self.clear()
 
     @property
@@ -172,6 +172,7 @@ class Proc:
 
 
 class Target:
+    """simulate the ICSP target (PIC microcontroller) being programmed"""
     def __init__(self, device_name, firmware):
         self.firmware = firmware
         self.word_address = 0
@@ -570,7 +571,8 @@ class BLoadProc(Proc):
 
         self.boot_crc += sum(self.boot_data)
 
-    def calc_crc(self, data: bytes):
+    @staticmethod
+    def calc_crc(data: bytes):
         crc = sum(data) % 0x100
          
         return bytes([crc])

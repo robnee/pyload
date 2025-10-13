@@ -259,7 +259,7 @@ def main():
         with open(TMP + 'icsp.hex') as fp:
             firmware.read(fp)
 
-        ser = mock.ICSPHost(firmware)
+        ser = mock.ICSPHost('12F1822', firmware)
     else:
         ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
 

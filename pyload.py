@@ -213,7 +213,7 @@ def connect(com):
     print('Reset ...')
     reset(com)
     com.flush()
-    
+
     # boot loader is now waiting on a break signal to activate
     com.pulse_break(0.200)
 
