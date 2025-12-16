@@ -194,7 +194,7 @@ class Hexfile:
         base = 0x00
 
         for line_num, line in enumerate(fp, start=1):
-            m = re.search('^:(?P<count>\S\S)(?P<address>\S\S\S\S)(?P<rectype>\S\S)(?P<words>\S*)(?P<checksum>\S\S)',
+            m = re.search(r'^:(?P<count>\S\S)(?P<address>\S\S\S\S)(?P<rectype>\S\S)(?P<words>\S*)(?P<checksum>\S\S)',
                           line.strip())
             count, address, rectype, words, checksum = m.groups()
 
