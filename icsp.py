@@ -97,7 +97,7 @@ def show_progress(cmd: bytes):
         sys.stdout.write('>')
     elif cmd in (b'L', b'F'):
         sys.stdout.write(':')
-        
+
     sys.stdout.flush()
 
 
@@ -112,10 +112,12 @@ def write_config(com: comm.Comm, firmware_list, device):
     if page is None:
         return
 
+    cmd_code = b'L'
     data = bytes(page)[:conf_page_len * 2]
     # config words must be programed one at a time so use 1 for num latches
     # write_program_page(com, device, conf_page_num, bytes(data), num_latches=1)
-    write_page(com, device, b'L', bytes(data), num_latches=1)
+    write_page(com, device, cmd_code, data, num_latches=1)
+    show_progress(cmd_code)
 
     print()
 
@@ -139,18 +141,10 @@ def read_config(com: comm.Comm, device) -> bytes:
 
 
 def write_page(com: comm.Comm, device, cmd_code: bytes, data: bytes, num_latches=None):
-    """"Write a single page or skip the range if empty"""
-
-    # Check for empty page and skip
-    if data is None:
-        jump(com, PAGELEN)
-        show_progress(b'S')
-        return
+    """Write a single page filling the indicated num of latches for each batch"""
 
     if not num_latches:
         num_latches = device['num_latches']
-
-    show_progress(cmd_code)
 
     word_count = 1
     for word_num in range(0, len(data), 2):
@@ -180,8 +174,12 @@ def write_pages(com: comm.Comm, device, cmd_code: bytes, page_nums: Iterable[int
     """write pages specified in page_list"""
     for page_num in page_nums:
         page = firmware_list[page_num]
-        data = bytes(page) if page else None
-        write_page(com, device, cmd_code, data)
+        if page:
+            write_page(com, device, cmd_code, bytes(page))
+            show_progress(cmd_code)
+        else:
+            jump(com, PAGELEN)
+            show_progress(b'S')
 
     print()
 
@@ -279,7 +277,7 @@ def read_data(com: comm.Comm, device):
 
 
 def send_command(com: comm.Comm, cmd: bytes, data=None):
-    """"package and send command with data"""
+    """package and send command with data"""
     if data is None:
         data = b''
 
@@ -331,7 +329,7 @@ def sync(com: comm.Comm):
 
     prompt = wait_k(com)
     if prompt != b'K':
-        raise RuntimeError(f'Error [{prompt}] command:{CMD_SYNC} ICSP')
+        raise RuntimeError(f'Error [{prompt!r}] command:{CMD_SYNC!r} ICSP')
 
     # There should be no characters waiting at this point
     avail = com.avail()
@@ -374,7 +372,7 @@ def load_config(com: comm.Comm, data=b'\x00\x00'):
 
 
 def jump(com: comm.Comm, count):
-    """jump program counter forward indicated number of words"""
+    """jump program counter forward by indicated number of words"""
     send_command(com, CMD_JUMP, count.to_bytes(2, 'little'))
     sync(com)
 

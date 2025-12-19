@@ -225,7 +225,7 @@ def connect(com):
 
     if count == 0 or value != b'K':
         return False
-        
+
     return True
 
 
@@ -235,7 +235,7 @@ def read_firmware(com, conf_page_num, prog_list, data_list):
     need to be blanked."""
     prog_pages = bload.read_program(com, prog_list)
     data_pages = bload.read_data(com, data_list)
-    
+
     firmware = prog_pages + data_pages
 
     # Get config page data and tweak to read-only regions
@@ -256,7 +256,7 @@ def read_firmware(com, conf_page_num, prog_list, data_list):
 
     return firmware
 
-    
+
 def program(com: comm.Comm, args):
     """ main """
 
@@ -274,7 +274,7 @@ def program(com: comm.Comm, args):
     else:
         file_firmware = None
 
-    if args.cdef:
+    if args.cdef and file_firmware:
         for page_num in range(64):
             if file_firmware[page_num]:
                 print('page_list[%d] = "%s";' % (page_num, file_firmware[page_num]))
@@ -284,7 +284,7 @@ def program(com: comm.Comm, args):
     if not connect(com):
         print('[{count}, {value}] Could not find boot loader on {com.port}\n')
         return
-        
+
     print('Connected...')
 
     # Get info about the bootloader
@@ -373,12 +373,12 @@ def program(com: comm.Comm, args):
         if not args.quiet:
             print()
             print(chip_firmware.display())
-        
+
     if args.read:
         print('Saving firmware to', args.filename, '...')
         with open(args.filename, mode='w') as fp:
             chip_firmware.write(fp)
-    else:
+    elif file_firmware:
         if not args.fast:
             print('Saving firmware to previous.hex ...')
             with open("previous.hex", mode='w') as fp:
@@ -486,7 +486,7 @@ def program(com: comm.Comm, args):
 
     print("Reseting target...")
     reset(com)
-                   
+
     print(f"elapsed time: {time.time() - start_time:0.2f} seconds")
 
 
@@ -544,11 +544,11 @@ def run(argv=None):
         # Check for commands that require a filename
         if args.filename is not None:
             program(ser_com, args)
-        
+
         if args.term:
             ser_com.pulse_dtr(0.250)
             term.terminal(ser_com)
-            
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

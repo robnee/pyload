@@ -8,6 +8,7 @@ $Id: hex.py 714 2017-10-28 17:45:51Z rnee $
 import re
 import binascii
 import itertools
+from typing import Iterator
 
 PAGELEN = 32
 PAGEBYTES = PAGELEN * 2
@@ -118,6 +119,9 @@ class Page:
             raise TypeError('int or str only')
 
         self.page[key] = value
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self.page)
 
     def __bytes__(self):
         return self.tobytes(b'\xff\xff')

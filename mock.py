@@ -16,7 +16,7 @@ import random
 import logging
 import intelhex
 import picdevice
-
+from typing import Optional
 
 CMD_LOAD_CONFIG = b'\x00'
 CMD_LOAD_PGM = b'\x02'
@@ -277,15 +277,15 @@ class Target:
             self.word_address = 0
         else:
             raise RuntimeError('invalid cmd:', self.cmd)
-        
+
         self.cmd = None
-              
+
     def send_cmd(self, cmd: bytes):
         """ send icsp command.  equivalent to clocking in the first six bits """
 
         # there should be no pending commands when receiving a new one
         if self.cmd is not None:
-            raise ValueError(f'sending cmd {cmd} pending {self.cmd}')
+            raise ValueError(f'sending cmd {cmd!r} pending {self.cmd!r}')
 
         self.cmd = cmd
 
@@ -316,7 +316,7 @@ class Target:
 
 
 class ICSPProc(Proc):
-    def __init__(self, port: Port, device: str, firmware: intelhex.Hexfile=None):
+    def __init__(self, port: Port, device: str, firmware: Optional[intelhex.Hexfile]=None):
         Proc.__init__(self, port)
         self.target = Target(device, firmware)
 
@@ -507,14 +507,14 @@ class BLoadProc(Proc):
     ;   enough to indicate success.
     ;
     """
-    
+
     BOOT_VERSION = 0x15
     BOOT_PAGESIZE = 0x40
     BOOT_START = 0x680
     BOOT_SIZE = 0x180
     BOOT_END = BOOT_START + BOOT_SIZE - 1
 
-    def __init__(self, port: Port, device_name: str, firmware: intelhex.Hexfile=None):
+    def __init__(self, port: Port, device_name: str, firmware: Optional[intelhex.Hexfile]=None):
         Proc.__init__(self, port)
         self.boot_crc = 0
         self.address = 0

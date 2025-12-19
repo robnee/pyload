@@ -41,15 +41,12 @@ def calc_checksum(data: bytes) -> int:
     return sum(data) & 0xFF
 
 
-def get_command(cmd_code, page_num: int, data: bytes=None) -> bytes:
+def get_command(cmd_code, page_num: int, data: bytes=b'') -> bytes:
     r""" Generate a command string including a command char, address and checksum
 
     >>> get_command(b'X', 12, b'1234')
     b'X\x80\x011234K'
     """
-
-    if data is None:
-        data = b''
 
     address = get_address(page_num)
     checksum = bytes([calc_checksum(address + data)])
@@ -100,11 +97,11 @@ def get_info(com):
     for retry in range(5):
         try:
             cmd = b'I' + b'\0'
-    
+
             com.write(cmd)
-    
+
             count, data = com.read(16)
-    
+
             # if bootloader responds with less than four bytes assume that it
             # doesn't  support the I command.
             if count < 4:
@@ -114,27 +111,27 @@ def get_info(com):
             if data == b'CK':
                 logging.warning('Checksum error issuing bootloader info command')
                 raise RuntimeError
-    
+
             count, checksum = com.read(1)
             if not checksum:
                 logging.warning('no checksum returned')
                 raise RuntimeError
-    
+
             # Check checksum
             act_checksum = calc_checksum(data)
             if ord(checksum) != act_checksum:
                 logging.warning('Checksum error getting bootloader info.',
                                 f'chip:0x{ord(checksum):02x} calc:0x{act_checksum:02x}')
                 raise RuntimeError
-    
+
             ready = sync(com)
             if not ready:
                 logging.warning('Sync error reading bootloader info')
                 raise RuntimeError
-    
+
             # return boot_version, boot_start, boot_size, data_start, data_end, code_end
             return struct.unpack('BBHHHHHxxxx', data)
-            
+
         except RuntimeError:
             sync(com)
 
@@ -188,9 +185,9 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
     for retry in range(5):
         try:
             com.write(cmd)
-    
+
             data_count, data = com.read(PAGESIZE)
-    
+
             if data_count != PAGESIZE:
                 # Check for specific errors
                 if data.startswith(b'CK'):
@@ -199,22 +196,22 @@ def read_page(com, cmd: bytes, page_num: int) -> bytes:
                 if data.startswith(b'EK'):
                     logging.warning(f'Command error on read attempt {retry} on page {page_num}')
                     raise RuntimeError
-    
+
                 logging.warning(f'Short page {page_num} [{data_count}]')
                 raise RuntimeError
-    
+
             # Check checksum
             count, checksum = com.read(1)
             if not checksum:
                 logging.warning('no checksum returned')
                 raise RuntimeError
-    
+
             act_checksum = calc_checksum(data)
             if ord(checksum) != act_checksum:
-                logging.warning(f'Checksum error reading page: 0x{page_num:03x} cmd: {cmd}')
+                logging.warning(f'Checksum error reading page: 0x{page_num:03x} cmd: {cmd!r}')
                 logging.warning(f'checksum: {ord(checksum)} computed: {act_checksum}')
                 raise RuntimeError
-    
+
             return data
         except RuntimeError:
             sync(com)

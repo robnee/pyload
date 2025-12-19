@@ -4,11 +4,11 @@ $Id: comm.py 861 2018-03-15 23:44:30Z rnee $
 """
 
 import time
-
+from typing import Optional, TextIO
 
 class Comm:
     """Serial port wrapper that supports logging and mocking"""
-    def __init__(self, ser, logf=None):
+    def __init__(self, ser, logf: Optional[TextIO]=None):
         self.ser = ser
         self.logf = logf
         self.time0 = time.time()
@@ -24,7 +24,7 @@ class Comm:
 
     def __enter__(self):
         return self
-        
+
     def __exit__(self, *exc):
         self.close()
 
