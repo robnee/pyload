@@ -18,23 +18,36 @@ icsp.pl [-p=port] [-b=rate] [-q] [-f] [-w] [-t] <filename.hex>
 
 The Host controller understands the following commands
 
-Sn	- Start programming.  Hold MCLR on target low and send MCHP signiture
-En	- End programming.  Release MCLR on target
-X	- Reset the Address counter to zero
-I	- Increment the Address counter
+Cn  - Send command
+      x00 Load config
+      x02 Load pgm
+      x03 Load data
+      x04 Read pgm
+      x06 Inc address
+      x16 Reset address
+      x08 Program internal
+      x18 Program external
+      x0A Program end
+      x09 Erase pgm
+      x0B Erase data
 Jnn - Jump the Address counter a given number of locations
-Bn	- Bulk erase program memory
-An	- Bulk erase data memory
-Cnn	- Set address to 8000h and Load config word
-Lnn	- Load program word at current address
-Mnn	- Load program word at current address and increment program counter
-Pn	- Program commit
-R	- Read program memory
+Dn	- Load data byte for programming
 Fnn	- Fetch program memory words
 Gnn	- Get data memory words
-Dn	- Load data byte for programming
-V	- ICSP version
-K	- NOP.  Just returns the K prompt
+K	- Sync/NOP.  Just returns the K prompt
+P   - Pause 5ms
+R   - Read single program word
+Q   - Query status, returns TRISA, TRISB, LATA, LATB, 4 x 0xFF
+Ln  - Low level command, n is:
+      E, F, G mclr1 out, low, high
+      H, I, J mclr2 out, low, high
+      L, M, N, O clk out, low, high, pulse
+      P, Q, R, S dat in, out, low, high
+      T, U von low, high
+U   - Send byte
+W   - Send word
+V   - Version
+Z   - Release
 
 V0.1 04/18/2013
 
@@ -151,19 +164,13 @@ def start(com):
 
     time.sleep(0.001)
 
-    # Send key sequence with an extra clock at the end
+    # Send key sequence ('PHCM' with an extra clock at the end)
     icsp.send_command(com, b'UPUHUCUMLO')
 
 
 def program(com):
     """main programming routine"""
 
-    # Check for a filename
-    if args.filename is None:
-        parser.print_help()
-        return
-
-    # unless we are reading out the chip firmware read a new file to load
     if not args.read:
         with open(args.filename) as fp:
             file_firmware = intelhex.Hexfile()
@@ -210,17 +217,9 @@ def program(com):
     print("\nDevice Info:")
     chip_rev, chip_id, cfg1, cfg2, cal1, cal2 = read_info(com)
 
-    # enhanced and midrange have different id/rev bits
-    for mask, shift in ((0x00, 0), (0x00F, 4), (0x01F, 5)):
-        if 0x00 < chip_rev < 0x3FFF:
-            device_rev = chip_rev
-        else:
-            device_rev = chip_id & mask
-
-        device_id = chip_id >> shift
-        if device_id in picdevice.PARAM:
-            break
-    else:
+    # detect chip. enhanced and midrange have different id/rev bits
+    device_param = picdevice.find_by_chip_id(chip_id)
+    if not device_param:
         print(" ID: %04X not in device list" % chip_id)
 
         print("End...")
@@ -228,8 +227,8 @@ def program(com):
 
         return
 
-    device_param = picdevice.PARAM[device_id]
     device_name = device_param['name']
+    device_id, device_rev = picdevice.get_id_rev(device_param, chip_id, chip_rev)
 
     print(f" ID: {device_id:04X} {device_name} rev {device_rev:02X}")
     print(f"CFG: {cfg1:04X} {cfg2:04X}")
@@ -336,27 +335,32 @@ if __name__ == '__main__':
             os.unlink(args.log)
         logf = open(args.log, 'a')
 
-    start_time = time.time()
+    if args.filename:
+        start_time = time.time()
 
-    print('Initializing communications on {} {} ...'.format(args.port, args.baud))
-    ser: Any = None
-    if args.port.upper() == 'MOCK':
-        import mock
+        ser: Any = None
+        if args.port.upper().startswith('MOCK'):
+            import mock
 
-        # unless we are reading out the chip firmware read a new file to load
-        with open('mock.hex') as fp:
-            mock_firmware = intelhex.Hexfile()
-            mock_firmware.read(fp)
+            _, device, filename = args.port.split('-')
+            print(f'Mocking communications target: {device}/{filename} ...')
+            # unless we are reading out the chip firmware read a new file to load
+            with open(filename) as fp:
+                mock_firmware = intelhex.Hexfile()
+                mock_firmware.read(fp)
 
-        ser = mock.ICSPHost('12F1822', mock_firmware)
+            ser = mock.ICSPHost(device, mock_firmware, baudrate=args.baud)
+        else:
+            import serial
+
+            print(f'Initializing communications on {args.port} {args.baud} ...')
+            ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
+
+        # create wrapper
+        with comm.Comm(ser, logf) as ser_com:
+            print(ser_com)
+            program(ser_com)
+
+        print(f"elapsed time: {time.time() - start_time:0.2f} seconds")
     else:
-        import serial
-
-        ser = serial.Serial(args.port, baudrate=args.baud, bytesize=DATA, timeout=TOUT)
-
-    # create wrapper
-    with comm.Comm(ser, logf) as ser_com:
-        print(ser_com)
-        program(ser_com)
-
-    print(f"elapsed time: {time.time() - start_time:0.2f} seconds")
+        parser.print_help()

@@ -305,28 +305,20 @@ def program(com: comm.Comm, args):
     for word in config[0: 4 * 2: 2]:
         user_id += '{:X}'.format(word & 0x0F)
 
+    chip_rev = int.from_bytes(config[5 * 2: 6 * 2], 'little')
     chip_id = int.from_bytes(config[6 * 2: 7 * 2], 'little')
-    chip_rev = int.from_bytes(config[6 * 2: 7 * 2], 'little')
     config_words = [int.from_bytes(config[7 * 2: 8 * 2], 'little'),
                     int.from_bytes(config[8 * 2: 9 * 2], 'little')]
 
-    # enhanced and midrange have different id/rev bits
-    for mask, shift in ((0x00, 0), (0x00F, 4), (0x01F, 5)):
-        if 0x00 < chip_rev < 0x3FFF:
-            device_rev = chip_rev
-        else:
-            device_rev = chip_id & mask
-
-        device_id = chip_id >> shift
-        if device_id in picdevice.PARAM:
-            break
-    else:
+    # detect chip. enhanced and midrange have different id/rev bits
+    device_param = picdevice.find_by_chip_id(chip_id)
+    if not device_param:
         print(" ID: %04X not in device list" % chip_id)
         reset(com)
         sys.exit()
 
-    device_param = picdevice.PARAM[device_id]
     device_name = device_param['name']
+    device_id, device_rev = picdevice.get_id_rev(device_param, chip_id, chip_rev)
 
     print("\nBootloader Version: %02X\n"
           "Page Size:          0x%02X\n"
@@ -520,15 +512,16 @@ def run(argv=None):
         logf = None
 
     print('Initializing communications on {} {} ...'.format(args.port, args.baud))
-    if args.port.upper() == 'MOCK':
+    if args.port.upper().startwith('MOCK'):
         import mock
 
+        _, device, filename = args.port.split('-')
         # unless we are reading out the chip firmware read a new file to load
-        with open('mock.hex') as fp:
+        with open(filename) as fp:
             mock_firmware = intelhex.Hexfile()
             mock_firmware.read(fp)
 
-        ser = mock.BLoadHost('12F1822', mock_firmware)
+        ser = mock.BLoadHost(device, mock_firmware)
     else:
         import serial
 

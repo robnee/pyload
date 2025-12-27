@@ -12,7 +12,8 @@ Ln  - Low-level API to manipulate control lines based on subcommand n
 Q   - Query line status
 V	- ICSP version
 K	- Sync command.  Illicit a K in response
-Wnn - Send Word
+Un  - Send byte
+Wnn - Send word
 Z   - Release all programmer lines
 
 Low level API (command L)

@@ -33,11 +33,16 @@ CMD_RESET_ADDRESS = b'\x16'
 
 
 class Port:
-    def __init__(self):
+    NO_ERRORS = {'write': 0.00, 'read': 0.00}
+
+    """Emulate a serial port connection to a host command processor. Uses
+    read and write buffers and a separate read/write API for the host side"""
+    def __init__(self, *, baudrate: int, error_prob: dict=NO_ERRORS):
+        self.error_prob = error_prob
+        self.char_delay = 1.0 / int(baudrate) * 10
         self._dtr = False
         self.inq = bytes()
         self.outq = bytes()
-        self.error_prob = {'write': 0.03, 'read': 0.01}
 
     def _add_noise(self, data: bytes, op: str) -> bytes:
         """simulate transmission errors"""
@@ -45,8 +50,8 @@ class Port:
             num_bytes = len(data)
             index = random.randrange(num_bytes)
             noise = bytes([random.randrange(256)])
+            logging.info(f'data error {op} {noise!r}@{index} of {num_bytes}')
             data = data[:index] + noise + data[index + 1:]
-            logging.info(f'data error {op} {num_bytes}')
 
         return data
 
@@ -95,14 +100,16 @@ class Port:
 
     def write(self, data: bytes):
         self.outq += self._add_noise(data, 'write')
+        time.sleep(self.char_delay * len(data))
 
     def read(self, num_bytes: int):
         """read data from inq"""
         if len(self.inq) < num_bytes:
-            logging.info(f'{self.inq} < {num_bytes} out: {self.outq}')
-            
+            logging.info(f'{self.inq!r} < {num_bytes} out: {self.outq!r}')
+
         ret, self.inq = self.inq[: num_bytes], self.inq[num_bytes:]
-        logging.debug(f'read: {num_bytes} {ret} in: {self.inq} out: {self.outq}')
+        logging.debug(f'read: {num_bytes} {ret!r} in: {self.inq!r} out: {self.outq!r}')
+        time.sleep(self.char_delay * num_bytes)
 
         return self._add_noise(ret, 'read')
 
@@ -115,22 +122,25 @@ class Port:
             ret, self.inq = self.inq, bytes()
         else:
             ret, self.inq = self.inq[: nl + 1], self.inq[nl + 1:]
+        time.sleep(self.char_delay * len(ret))
 
         return self._add_noise(ret, 'read')
-        
+
     def send_break(self, duration: int):
         self.clear()
 
     def open(self):
         self.clear()
-        
+
     def close(self):
         self.clear()
 
     def ser_avail(self):
+        """host-side equivalent of in_waiting"""
         return self.outq
-        
+
     def ser_get(self) -> bytes:
+        """host-side access to bytes sent by write()"""
         # read a byte from outq
         if not self.ser_avail():
             raise EOFError
@@ -139,11 +149,13 @@ class Port:
         return ret
 
     def ser_get_word(self) -> int:
+        """host-side access to two byte words sent by write()"""
         low = self.ser_get()
         high = self.ser_get()
         return int.from_bytes(low + high, byteorder='little')
 
     def ser_out(self, data: bytes):
+        """host-side access to queue that feeds read()"""
         # add bytes to the inq
         self.inq += data
 
@@ -163,7 +175,7 @@ class Proc:
 
     def ser_get(self) -> bytes:
         return self.port.ser_get()
-        
+
     def ser_get_word(self) -> int:
         return self.port.ser_get_word()
 
@@ -174,13 +186,13 @@ class Proc:
 class Target:
     """simulate the ICSP target (PIC microcontroller) being programmed"""
     def __init__(self, device_name, firmware):
-        self.firmware = firmware
         self.word_address = 0
         self.cmd = None
         self.word = b''
         self.run_state = "HALT"
-        
+
         self.device = picdevice.find_by_name(device_name)
+        self.firmware = firmware
         self._clear_latches()
 
     @property
@@ -189,22 +201,22 @@ class Target:
 
     def _clear_latches(self):
         self.latch = [None] * self._latch_count
-        
+
     def _load_latch(self):
         pn, bn = divmod(self.word_address, self._latch_count)
         self.latch[bn] = self.word
 
     def _read_word(self, msb_mask: int):
         """access a two byte firmware word by word address"""
-        
+
+        page_num, word_num = divmod(self.word_address, intelhex.PAGELEN)
         # chip id and revision aren't in firmware file
-        if self.word_address == 0x8006:
-            chip_id = (0b10_0111_000 << 5) + 0b0_0101
-            self.word = chip_id.to_bytes(2, 'little')
+        if page_num == self.device['conf_page'] and word_num == self.device['id_loc'][0]:
+            self.word = self.device['chip_id'].to_bytes(2, 'little')
         else:
             page_num, word_num = divmod(self.word_address, intelhex.PAGELEN)
             byte_num = word_num * 2
-            
+
             page = self.firmware[page_num]
             if page:
                 data = bytes(page)
@@ -219,7 +231,7 @@ class Target:
         # compute page, offset and latch address
         page_num, page_offset = divmod(self.word_address, intelhex.PAGELEN)
         word_offset = (page_offset // self._latch_count) * self._latch_count
-  
+
         if not self.firmware[page_num]:
             self.firmware[page_num] = intelhex.Page()
 
@@ -234,21 +246,21 @@ class Target:
         for page_num in range(self.device['max_page'] + 1):
             self.firmware[page_num] = None
 
-        # clear user id words 
+        # clear user id words
         page_num = self.device['conf_page']
         self.firmware[page_num][0] = None
         self.firmware[page_num][1] = None
         self.firmware[page_num][2] = None
         self.firmware[page_num][3] = None
-    
+
     def _erase_data(self):
         for page_num in range(self.device['min_data'], self.device['max_data'] + 1):
             self.firmware[page_num] = None
-        
+
     def _run(self):
         """ process cmd/word instructions """
 
-        # print(f'cmd: {cmd} addr: {self.word_address: X} word: {self.word}')
+        #print(f'cmd: {self.cmd} addr: {self.word_address: X} word: {self.word}')
         # TODO: check run state to ignore commands
         if self.cmd == CMD_LOAD_CONFIG:
             self.word_address = 0x8000
@@ -302,7 +314,7 @@ class Target:
         self._run()
 
     def send_byte(self, b: bytes):
-        # TODO: implement start state management
+        # TODO: implement start state management to properly detect start
         pass
 
     def get_word(self) -> bytes:
@@ -316,6 +328,7 @@ class Target:
 
 
 class ICSPProc(Proc):
+    """simulate ICSP command processor"""
     def __init__(self, port: Port, device: str, firmware: Optional[intelhex.Hexfile]=None):
         Proc.__init__(self, port)
         self.target = Target(device, firmware)
@@ -323,38 +336,36 @@ class ICSPProc(Proc):
     def run(self):
         """dispatch incoming commands"""
         while self.ser_avail():
-            time.sleep(0.003)
-
             # command
             c = self.ser_get()
             logging.debug(f'cmd:{c} in: {self.port.inq} out: {self.port.outq}')
-    
+
             # dispatch
             if c == b'K':  # sync
                 self.ser_out(b'K')
-    
+
             elif c == b'C':  # send command
                 a = self.ser_get()
                 self.target.send_cmd(a)
-    
+
             elif c == b'J':  # jump
                 num_words = self.ser_get_word()
-                
+
                 for _ in range(num_words):
                     self.target.send_cmd(CMD_INC)
-    
+
             elif c == b'F':  # fetch program words
                 num_words = self.ser_get_word()
-    
+
                 for _ in range(num_words):
                     self.target.send_cmd(CMD_READ_PGM)
                     word = self.target.get_word()
                     self.ser_out(word)
                     self.target.send_cmd(CMD_INC)
-    
+
             elif c == b'G':  # fetch data words
                 num_words = self.ser_get_word()
-    
+
                 for _ in range(num_words):
                     self.target.send_cmd(CMD_READ_DATA)
                     word = self.target.get_word()
@@ -363,19 +374,19 @@ class ICSPProc(Proc):
 
             elif c == b'P':  # pause
                 time.sleep(0.005)
-    
+
             elif c == b'R':  # read single program word
                 w = self.target.get_word()
                 self.ser_out(w)
-    
+
             elif c == b'Q':  # query status
                 # send TRISA, TRISB, LATA, LATB plus padding 4 x 0xff
-                self.ser_out(b'\x00\x00\x00\x00\x00\x00\x00\x00')
-    
+                self.ser_out(b'\x00\x00\x00\x00\xff\xff\xff\xff')
+
             elif c == b'L':
                 # Low-level functions.  Fetch sub command and assume it's valid
                 a = self.ser_get()
-                if a in (b'H', b'L', b'P', b'Q'):
+                if a in b'EFGHLPQSTUR':
                     # these command need no implementation
                     pass
                 elif a == b'I':
@@ -389,29 +400,31 @@ class ICSPProc(Proc):
                 elif a == b'O':
                     self.target.set_clk(True)
                     self.target.set_clk(False)
-    
+
             elif c == b'U':  # send byte
                 b = self.ser_get()
                 self.target.send_byte(b)
-    
+
             elif c == b'W':  # send word
                 word = self.ser_get_word()
                 self.target.send_arg(word)
-    
+
             elif c == b'V':  # version
                 self.ser_out(b'V1.8\n')
-    
+
             elif c == b'Z':  # release
                 pass
-    
+
             else:
                 self.ser_out(b'E')
 
 
 class ICSPHost(Port):
-    def __init__(self, device: str, firmware):
-        Port.__init__(self)
-        
+    """simulate serial connection to host running ICSP command processor
+    connected to a given PIC target device containing given firmware"""
+    def __init__(self, device: str, firmware, baudrate: int):
+        Port.__init__(self, baudrate=baudrate)
+
         self.proc = ICSPProc(self, device, firmware)
 
     def reset(self):
@@ -435,8 +448,8 @@ class ChecksumError(Exception):
     def __inir__(self, recv, calc):
         self.recv = recv
         self.calc = calc
-        
-        
+
+
 class BLoadProc(Proc):
     """
     ;   Commands:
@@ -543,8 +556,8 @@ class BLoadProc(Proc):
 
     @property
     def eeprom_end(self):
-        return self.device['max_data'] * self.BOOT_PAGESIZE // 2 
-    
+        return self.device['max_data'] * self.BOOT_PAGESIZE // 2
+
     @property
     def conf_page_num(self):
         return self.device['conf_page']
@@ -553,7 +566,7 @@ class BLoadProc(Proc):
         c = self.ser_get()
         if self.boot_crc % 0x100 != c[0]:
             raise ChecksumError(c[0], self.boot_crc)
-    
+
     def boot_address(self):
         self.address = self.ser_get_word()
         self.boot_crc = sum(divmod(self.address, 0x100))
@@ -574,9 +587,9 @@ class BLoadProc(Proc):
     @staticmethod
     def calc_crc(data: bytes):
         crc = sum(data) % 0x100
-         
+
         return bytes([crc])
-        
+
     def get_page_num(self):
         page_num, word_num = divmod(self.address, intelhex.PAGELEN)
         if word_num != 0:
@@ -609,11 +622,11 @@ class BLoadProc(Proc):
         page_num = self.conf_page_num
         page = self.firmware[page_num]
 
-        chip_id = (0b10_0111_000 << 5) + 0b0_0101
-        page[6] = chip_id
-        
+        id_word = self.device['id_loc'][0]
+        page[id_word] = self.device['chip_id']
+
         data = page.tobytes(b'\xff\x3f')
-        
+
         self.ser_out(data)
         self.ser_out(self.calc_crc(data))
 
@@ -621,12 +634,12 @@ class BLoadProc(Proc):
         """ send program words """
         page_num = self.get_page_num()
         page = self.firmware[page_num]
-        
+
         if page:
             data = page.tobytes(null)
         else:
             data = null * intelhex.PAGELEN
-        
+
         self.ser_out(data)
         self.ser_out(self.calc_crc(data))
 
@@ -655,11 +668,9 @@ class BLoadProc(Proc):
             return
 
         while self.ser_avail():
-            time.sleep(0.002)
-
             # command
             c = self.ser_get()
-            
+
             self.boot_crc = 0
 
             # dispatch
@@ -706,18 +717,18 @@ class BLoadProc(Proc):
                 continue
 
             self.ser_out(b'K')
-        
+
 
 class BLoadHost(Port):
-    def __init__(self, device: str, firmware):
-        Port.__init__(self)
-        
+    def __init__(self, device: str, firmware, baudrate: int):
+        Port.__init__(self, baudrate=baudrate)
+
         self.proc = BLoadProc(self, device, firmware)
 
     def reset(self):
         super().reset()
         self.proc.reset()
-        
+
     def send_break(self, duration: int):
         super().send_break(duration)
         self.proc.send_break()
@@ -729,7 +740,7 @@ class BLoadHost(Port):
         # Process the data
         self.proc.run()
 
-       
+
 if __name__ == "__main__":
     import pyload
     pyload.run(['--port', 'mock', 'x.hex'])
